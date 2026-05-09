@@ -1,158 +1,247 @@
 "use client";
+/** * components/ManageCollaborators.jsx — v3 
+ * * NEW: Transfer Project Ownership section (Danger Zone). 
+ * Visible only to the current project admin. 
+ * Uses projectAdmins mapping and transferProjectAdmin() function. 
+ */
 import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import toast from "react-hot-toast";
+import { useWallet } from "@/context/WalletContext";
 
 function isValidAddress(addr) { return /^0x[0-9a-fA-F]{40}$/.test(addr); }
+function truncate(addr) { return addr ? `${addr.slice(0,6)}...${addr.slice(-4)}` : "—"; }
 
 export default function ManageCollaborators({ contractAddress, contractABI, projectId }) {
-  const [isOwner, setIsOwner] = useState(false);
-  const [checkingOwner, setCheckingOwner] = useState(true);
-  const [connectedWallet, setConnectedWallet] = useState("");
-  const [contractOwner, setContractOwner] = useState("");
-  const [address, setAddress] = useState("");
-  const [addrError, setAddrError] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [authorized, setAuthorized] = useState([]);
+  const { address } = useWallet();
+  const [isAdmin,       setIsAdmin]       = useState(false);
+  const [checkingAdmin, setCheckingAdmin] = useState(true);
+  const [adminAddress,  setAdminAddress]  = useState("");
+  
+  // Authorize collaborator state
+  const [collabAddr,    setCollabAddr]    = useState("");
+  const [collabError,   setCollabError]   = useState("");
+  const [authorizing,   setAuthorizing]   = useState(false);
+  const [authorized,    setAuthorized]    = useState([]);
+  
+  // Transfer ownership state
+  const [transferAddr,  setTransferAddr]  = useState("");
+  const [transferError, setTransferError] = useState("");
+  const [transferring,  setTransferring]  = useState(false);
+  const [showDanger,    setShowDanger]    = useState(false);
+  const [transferred,   setTransferred]   = useState(false); // hides panel after transfer
 
-  const checkOwnership = useCallback(async () => {
-    setCheckingOwner(true);
-    try {
-      if (!window.ethereum) throw new Error("MetaMask not found.");
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      const walletAddr = await signer.getAddress();
-      setConnectedWallet(walletAddr);
-      const contract = new ethers.Contract(contractAddress, contractABI, provider);
-      const owner = await contract.owner();
-      setContractOwner(owner);
-      setIsOwner(walletAddr.toLowerCase() === owner.toLowerCase());
-    } catch { setIsOwner(false); }
-    finally { setCheckingOwner(false); }
-  }, [contractAddress, contractABI]);
-
-  useEffect(() => {
-    checkOwnership();
-    if (window.ethereum) {
-      window.ethereum.on("accountsChanged", checkOwnership);
-      return () => window.ethereum.removeListener("accountsChanged", checkOwnership);
+  // ── Check if connected wallet is project admin ────────────────────────────
+  const checkAdmin = useCallback(async () => {
+    if (!contractAddress || !contractABI || !projectId || !address) {
+      setCheckingAdmin(false); return;
     }
-  }, [checkOwnership]);
+    setCheckingAdmin(true);
+    try {
+      const provider = new ethers.JsonRpcProvider(process.env.NEXT_PUBLIC_RPC_URL);
+      const contract = new ethers.Contract(contractAddress, contractABI, provider);
+      const admin    = await contract.projectAdmins(projectId);
+      setAdminAddress(admin);
+      setIsAdmin(admin.toLowerCase() === address.toLowerCase());
+    } catch { setIsAdmin(false); }
+    finally  { setCheckingAdmin(false); }
+  }, [contractAddress, contractABI, projectId, address]);
 
-  const handleAddressChange = (e) => {
-    const val = e.target.value; setAddress(val);
-    setAddrError(val && !isValidAddress(val) ? "Must be a valid Ethereum address (0x + 40 hex chars)" : "");
-  };
+  useEffect(() => { checkAdmin(); }, [checkAdmin]);
 
+  // Re-check when MetaMask switches account
+  useEffect(() => {
+    if (!window.ethereum) return;
+    window.ethereum.on("accountsChanged", checkAdmin);
+    return () => window.ethereum.removeListener("accountsChanged", checkAdmin);
+  }, [checkAdmin]);
+
+  // ── Authorize collaborator ────────────────────────────────────────────────
   const handleAuthorize = async (e) => {
     e.preventDefault();
-    if (!address) { setAddrError("Address is required."); return; }
-    if (!isValidAddress(address)) { setAddrError("Invalid Ethereum address."); return; }
-    const toastId = toast.loading("Confirm in MetaMask…", { style: { background: "#0d0d0d", border: "1px solid #1a1a1a", color: "#e2e8f0", fontFamily: "monospace" } });
-    setIsSubmitting(true);
+    if (!collabAddr)               return setCollabError("Address is required.");
+    if (!isValidAddress(collabAddr)) return setCollabError("Invalid Ethereum address.");
+    setCollabError("");
+    
+    const toastId = toast.loading("Confirm in MetaMask…");
+    setAuthorizing(true);
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
+      const signer   = await provider.getSigner();
       const contract = new ethers.Contract(contractAddress, contractABI, signer);
-      const tx = await contract.authorizeCollaborator(projectId, address);
-      toast.loading("Transaction pending…", { id: toastId, style: { background: "#0d0d0d", border: "1px solid #1a1a1a", color: "#e2e8f0", fontFamily: "monospace" } });
+      const tx = await contract.authorizeCollaborator(projectId, collabAddr);
+      
+      toast.loading("Transaction pending…", { id: toastId });
       await tx.wait(1);
-      toast.success("Collaborator authorized!", { id: toastId, icon: "✓", style: { background: "#0d0d0d", border: "1px solid #1a1a1a", color: "#00ffa3", fontFamily: "monospace" } });
-      setAuthorized((prev) => [{ address, txHash: tx.hash }, ...prev]);
-      setAddress(""); setAddrError("");
+      
+      toast.success("Collaborator authorized.", { id: toastId });
+      setAuthorized(prev => [{ address: collabAddr, txHash: tx.hash }, ...prev]);
+      setCollabAddr("");
     } catch (err) {
-      const msg = err?.code === 4001 ? "Transaction rejected in MetaMask." : err?.message ?? "Transaction failed.";
-      toast.error(msg, { id: toastId, style: { background: "#0d0d0d", border: "1px solid #1a1a1a", color: "#f87171", fontFamily: "monospace" } });
-    } finally { setIsSubmitting(false); }
+      const msg = err?.code === 4001 ? "Rejected in MetaMask." : err?.message ?? "Transaction failed.";
+      toast.error(msg, { id: toastId });
+    } finally { setAuthorizing(false); }
   };
 
-  if (checkingOwner) return (
-    <div className="font-mono bg-[#0d0d0d] border border-[#1a1a1a] rounded-2xl px-6 py-5">
-      <div className="flex items-center gap-2 text-[#333] text-xs">
-        <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-          <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/>
-          <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-        </svg>
-        Verifying ownership…
-      </div>
+  // ── Transfer project admin ────────────────────────────────────────────────
+  const handleTransfer = async (e) => {
+    e.preventDefault();
+    if (!transferAddr)               return setTransferError("Address is required.");
+    if (!isValidAddress(transferAddr)) return setTransferError("Invalid Ethereum address.");
+    if (transferAddr.toLowerCase() === address?.toLowerCase())
+      return setTransferError("You are already the admin.");
+    setTransferError("");
+    
+    const toastId = toast.loading("Confirm in MetaMask…");
+    setTransferring(true);
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer   = await provider.getSigner();
+      const contract = new ethers.Contract(contractAddress, contractABI, signer);
+      const tx = await contract.transferProjectAdmin(projectId, transferAddr);
+      
+      toast.loading("Transferring ownership on-chain…", { id: toastId });
+      await tx.wait(1);
+      
+      toast.success("Project ownership transferred.", { id: toastId });
+      // Immediately hide the admin panel from the old admin
+      setIsAdmin(false);
+      setTransferred(true);
+    } catch (err) {
+      const msg = err?.code === 4001 ? "Rejected in MetaMask." : err?.message ?? "Transaction failed.";
+      toast.error(msg, { id: toastId });
+    } finally { setTransferring(false); }
+  };
+
+  // ── States ────────────────────────────────────────────────────────────────
+  if (checkingAdmin) return (
+    <div style={{ border:"1px solid var(--rule)", borderRadius:"8px", padding:"16px 20px", background:"var(--paper)", display:"flex", alignItems:"center", gap:"8px" }}>
+      <svg style={{ animation:"spin 1s linear infinite", width:"13px", height:"13px", flexShrink:0 }} fill="none" viewBox="0 0 24 24">
+        <circle style={{ opacity:0.2 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/>
+        <path style={{ opacity:0.8 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+      </svg>
+      <span style={{ fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:"var(--ink-4)" }}>Verifying admin rights…</span>
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 
-  if (!isOwner) return (
-    <div className="font-mono bg-[#0d0d0d] border border-[#1a1a1a] rounded-2xl px-6 py-5">
-      <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-full bg-[#0f0f0f] border border-[#1a1a1a] flex items-center justify-center shrink-0">
-          <svg className="w-3.5 h-3.5 text-[#333]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-          </svg>
-        </div>
-        <div>
-          <p className="text-[#444] text-xs font-semibold">Owner access required</p>
-          <p className="text-[#2a2a2a] text-[10px] mt-0.5">Connected: <span className="text-[#333] font-mono">{connectedWallet ? connectedWallet.slice(0,6) + "…" + connectedWallet.slice(-4) : "—"}</span></p>
-        </div>
+  if (!isAdmin || transferred) return (
+    <div style={{ border:"1px solid var(--rule)", borderRadius:"8px", padding:"16px 20px", background:"var(--paper-2)", display:"flex", alignItems:"center", gap:"10px" }}>
+      <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color:"var(--ink-4)", flexShrink:0 }}>
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+      </svg>
+      <div>
+        <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"11px", fontWeight:600, color:"var(--ink-3)" }}>
+          {transferred ? "Ownership transferred — admin panel hidden." : "Admin panel — requires project admin rights."}
+        </p>
+        {!transferred && adminAddress && (
+          <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", marginTop:"2px" }}>
+            Admin: {truncate(adminAddress)}
+          </p>
+        )}
       </div>
     </div>
   );
 
   return (
-    <div className="font-mono">
-      <div className="relative bg-[#0d0d0d] border border-[#2a2a2a] rounded-2xl overflow-hidden shadow-2xl shadow-black/60">
-        <div className="h-[3px] w-full bg-gradient-to-r from-[#fbbf24] via-[#f59e0b] to-[#d97706]"/>
-        <div className="px-6 py-5">
-          <div className="flex items-start justify-between mb-5">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <p className="text-[9px] tracking-[0.3em] uppercase text-[#f59e0b]">Owner Panel</p>
-                <span className="text-[9px] font-bold tracking-widest uppercase text-[#f59e0b] bg-[#f59e0b]/10 border border-[#f59e0b]/20 px-2 py-0.5 rounded-full">Admin</span>
-              </div>
-              <h2 className="text-lg font-bold text-white tracking-tight">Manage Collaborators</h2>
-              <p className="text-[11px] text-[#555] mt-0.5">Project: <span className="text-[#777]">{projectId}</span></p>
+    <>
+      <div style={{ border:"1px solid var(--rule)", borderRadius:"8px", overflow:"hidden", background:"var(--paper)" }}>
+        <div style={{ height:"2px", background:"var(--warning)" }} />
+        <div style={{ padding:"20px 22px" }}>
+          
+          {/* Header */}
+          <div style={{ paddingBottom:"12px", borderBottom:"1px solid var(--rule-light)", marginBottom:"16px" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"3px" }}>
+              <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--warning)", textTransform:"uppercase", letterSpacing:"0.18em" }}>Owner Panel</p>
+              <span style={{ fontFamily:"var(--font-geist-mono)", fontSize:"9px", fontWeight:700, background:"var(--warning-bg)", color:"var(--warning)", border:"1px solid #E8D088", padding:"1px 6px", borderRadius:"3px", letterSpacing:"0.08em" }}>ADMIN</span>
             </div>
-            <div className="text-right">
-              <p className="text-[9px] text-[#444] tracking-widest uppercase mb-1">Owner</p>
-              <p className="text-[10px] font-mono text-[#f59e0b]">{contractOwner ? contractOwner.slice(0,6) + "…" + contractOwner.slice(-4) : "—"}</p>
-            </div>
+            <h2 style={{ fontFamily:"var(--font-lora)", fontSize:"1.15rem", fontWeight:600, color:"var(--ink)", marginBottom:"3px" }}>Manage Collaborators</h2>
+            <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)" }}>
+              Project: <span style={{ color:"var(--ink-2)", fontWeight:600 }}>{projectId}</span>
+              &nbsp;·&nbsp; Admin: <span style={{ color:"var(--ink-2)" }}>{truncate(adminAddress)}</span>
+            </p>
           </div>
-          <form onSubmit={handleAuthorize} className="space-y-4">
+
+          {/* Authorize form */}
+          <form onSubmit={handleAuthorize} style={{ display:"flex", flexDirection:"column", gap:"12px", marginBottom:"16px" }}>
             <div>
-              <label className="block text-[10px] tracking-[0.2em] uppercase text-[#555] mb-2">Wallet Address to Authorize</label>
-              <input type="text" value={address} onChange={handleAddressChange} disabled={isSubmitting}
+              <label style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", textTransform:"uppercase", letterSpacing:"0.15em", display:"block", marginBottom:"6px" }}>Authorize Wallet Address</label>
+              <input type="text" value={collabAddr} onChange={e => { setCollabAddr(e.target.value); setCollabError(""); }} disabled={authorizing}
                 placeholder="0x0000000000000000000000000000000000000000" spellCheck={false}
-                className={"w-full bg-[#0a0a0a] border rounded-xl px-4 py-3 font-mono text-sm text-white placeholder-[#2a2a2a] focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed " + (addrError ? "border-red-900/50" : address && isValidAddress(address) ? "border-[#f59e0b]/30 focus:border-[#f59e0b]/60" : "border-[#1a1a1a] focus:border-[#333]")}/>
-              {addrError && <p className="text-red-400 text-[10px] mt-1.5">✕ {addrError}</p>}
-              {address && isValidAddress(address) && !addrError && <p className="text-[#f59e0b]/60 text-[10px] mt-1.5">✓ Valid Ethereum address</p>}
+                style={{ width:"100%", padding:"9px 12px", borderRadius:"6px", border:`1px solid ${collabError ? "var(--danger)" : collabAddr && isValidAddress(collabAddr) ? "#A8D8BE" : "var(--rule)"}`, background:"var(--paper)", color:"var(--ink)", fontFamily:"var(--font-geist-mono)", fontSize:"12px", outline:"none", boxSizing:"border-box" }} />
+              {collabError && <p style={{ fontSize:"11px", color:"var(--danger)", marginTop:"4px", fontFamily:"var(--font-geist-mono)" }}>✕ {collabError}</p>}
+              {!collabError && collabAddr && isValidAddress(collabAddr) && <p style={{ fontSize:"11px", color:"var(--accent)", marginTop:"4px", fontFamily:"var(--font-geist-mono)" }}>✓ Valid address</p>}
             </div>
-            <button type="submit" disabled={isSubmitting || !!addrError || !address}
-              className={"w-full py-3.5 rounded-xl text-[11px] font-bold tracking-[0.2em] uppercase transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed " + (isSubmitting ? "bg-[#111] border border-[#222] text-[#555]" : "bg-gradient-to-r from-[#f59e0b] to-[#d97706] text-[#050505] hover:brightness-110 active:scale-[0.99] shadow-lg shadow-[#f59e0b]/10")}>
-              {isSubmitting ? (
-                <span className="flex items-center justify-center gap-2">
-                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/>
-                    <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                  </svg>
+            <button type="submit" disabled={authorizing || !!collabError || !collabAddr}
+              style={{ width:"100%", padding:"11px", borderRadius:"6px", border:"none", background: authorizing || !collabAddr || collabError ? "var(--paper-3)" : "var(--warning)", color: authorizing || !collabAddr || collabError ? "var(--ink-4)" : "#fff", fontSize:"13px", fontWeight:600, cursor: authorizing || !collabAddr || collabError ? "not-allowed" : "pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:"8px" }}>
+              {authorizing ? (
+                <>
+                  <svg style={{ animation:"spin 1s linear infinite", width:"12px", height:"12px" }} fill="none" viewBox="0 0 24 24"><circle style={{ opacity:0.2 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/><path style={{ opacity:0.8 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                   Processing…
-                </span>
+                </>
               ) : "Authorize Collaborator"}
             </button>
           </form>
+
+          {/* Recent authorizations */}
           {authorized.length > 0 && (
-            <div className="mt-5 pt-4 border-t border-[#111]">
-              <p className="text-[9px] tracking-[0.2em] uppercase text-[#444] mb-3">Authorized this session</p>
-              <div className="space-y-2">
+            <div style={{ marginBottom:"16px" }}>
+              <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"9px", color:"var(--ink-4)", textTransform:"uppercase", letterSpacing:"0.15em", marginBottom:"8px" }}>Authorized this session</p>
+              <div style={{ display:"flex", flexDirection:"column", gap:"6px" }}>
                 {authorized.map((item, i) => (
-                  <div key={i} className="flex items-center justify-between bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-[#f59e0b]"/>
-                      <span className="font-mono text-[11px] text-[#aaa]">{item.address.slice(0,6)}…{item.address.slice(-4)}</span>
+                  <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", background:"var(--paper-2)", border:"1px solid var(--rule-light)", borderRadius:"4px", padding:"6px 10px" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:"6px" }}>
+                      <div style={{ width:"5px", height:"5px", borderRadius:"50%", background:"var(--accent)", flexShrink:0 }} />
+                      <span style={{ fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:"var(--ink-3)" }}>{truncate(item.address)}</span>
                     </div>
-                    <span className="text-[9px] text-[#333] font-mono">tx: {item.txHash.slice(0,8)}…</span>
+                    <span style={{ fontFamily:"var(--font-geist-mono)", fontSize:"9px", color:"var(--ink-4)" }}>tx/{item.txHash.slice(0,8)}…</span>
                   </div>
                 ))}
               </div>
             </div>
           )}
+
+          {/* ── Danger Zone: Transfer Ownership ──────────────────────────── */}
+          <div style={{ borderTop:"1px solid var(--rule-light)", paddingTop:"14px" }}>
+            <button
+              onClick={() => setShowDanger(d => !d)}
+              style={{ display:"flex", alignItems:"center", gap:"6px", background:"none", border:"none", cursor:"pointer", padding:0, marginBottom: showDanger ? "12px" : 0 }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color:"var(--danger)", flexShrink:0 }}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+              </svg>
+              <span style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--danger)", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.15em" }}>
+                Transfer Project Ownership {showDanger ? "▲" : "▼"}
+              </span>
+            </button>
+
+            {showDanger && (
+              <div style={{ background:"var(--danger-bg)", border:"1px solid #F5C6CB", borderRadius:"6px", padding:"14px 16px" }}>
+                <p style={{ fontSize:"12px", color:"var(--danger)", lineHeight:1.6, marginBottom:"12px", fontFamily:"var(--font-geist-mono)" }}>
+                  ⚠ This action is irreversible. The recipient wallet will become the project admin.
+                  You will lose admin rights immediately upon confirmation.
+                </p>
+                <form onSubmit={handleTransfer} style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
+                  <input type="text" value={transferAddr} onChange={e => { setTransferAddr(e.target.value); setTransferError(""); }} disabled={transferring}
+                    placeholder="New admin wallet address (0x...)" spellCheck={false}
+                    style={{ width:"100%", padding:"9px 12px", borderRadius:"6px", border:`1px solid ${transferError ? "var(--danger)" : "var(--rule)"}`, background:"var(--paper)", color:"var(--ink)", fontFamily:"var(--font-geist-mono)", fontSize:"12px", outline:"none", boxSizing:"border-box" }} />
+                  {transferError && <p style={{ fontSize:"11px", color:"var(--danger)", fontFamily:"var(--font-geist-mono)" }}>✕ {transferError}</p>}
+                  <button type="submit" disabled={transferring || !transferAddr}
+                    style={{ width:"100%", padding:"10px", borderRadius:"6px", border:"1px solid var(--danger)", background:"var(--paper)", color:"var(--danger)", fontSize:"12px", fontWeight:700, cursor: transferring || !transferAddr ? "not-allowed" : "pointer", opacity: transferring || !transferAddr ? 0.5 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:"8px" }}>
+                    {transferring ? (
+                      <>
+                        <svg style={{ animation:"spin 1s linear infinite", width:"12px", height:"12px" }} fill="none" viewBox="0 0 24 24"><circle style={{ opacity:0.2 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/><path style={{ opacity:0.8 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                        Transferring…
+                      </>
+                    ) : "Transfer Ownership"}
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+    </>
   );
 }
