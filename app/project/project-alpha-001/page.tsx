@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useWallet } from "@/context/WalletContext";
 import WalletBar from "@/components/WalletBar";
-import ProjectLoader from "@/components/ProjectLoader";
+import ProjectSelector from "@/components/ProjectSelector";
 import LogContributionForm from "@/components/LogContributionForm";
 import ManageCollaborators from "@/components/ManageCollaborators";
 import ContributionTimeline from "@/components/ContributionTimeline";
@@ -22,9 +22,14 @@ export default function ProjectPage() {
     <div style={{ minHeight:"100vh", background:"var(--paper)", color:"var(--ink)" }}>
       <WalletBar />
       <div style={{ height:"3px", background:"var(--accent)" }} />
+
       {isReady && needsProfile && (
-        <RegisterProfileModal contractAddress={CONTRACT_ADDRESS} contractABI={AcademicLedgerABI.abi} />
+        <RegisterProfileModal
+          contractAddress={CONTRACT_ADDRESS}
+          contractABI={AcademicLedgerABI.abi}
+        />
       )}
+
       <div style={{ maxWidth:"1200px", margin:"0 auto", padding:"32px 40px" }}>
         <header style={{ borderBottom:"1px solid var(--rule)", paddingBottom:"24px", marginBottom:"28px" }}>
           <div style={{ display:"flex", flexWrap:"wrap", alignItems:"flex-end", justifyContent:"space-between", gap:"16px" }}>
@@ -63,21 +68,42 @@ export default function ProjectPage() {
         ) : (
           <>
             <div style={{ marginBottom:"28px" }}>
-              <ProjectLoader currentProjectId={projectId} onLoad={setProjectId} />
+              <ProjectSelector
+                contractAddress={CONTRACT_ADDRESS}
+                contractABI={AcademicLedgerABI.abi}
+                currentProjectId={projectId}
+                onProjectChange={setProjectId}
+              />
             </div>
+
             {!projectId ? (
               <div style={{ textAlign:"center", padding:"60px 0" }}>
-                <p style={{ fontFamily:"var(--font-lora)", fontSize:"1rem", fontStyle:"italic", color:"var(--ink-4)" }}>Enter a Project ID above to load or create a research project.</p>
+                <p style={{ fontFamily:"var(--font-lora)", fontSize:"1rem", fontStyle:"italic", color:"var(--ink-4)" }}>Select a project from the dropdown or create a new one.</p>
                 <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:"var(--ink-4)", marginTop:"8px" }}>Each Project ID maps to an isolated namespace on the smart contract.</p>
               </div>
             ) : (
               <>
                 <div style={{ display:"grid", gridTemplateColumns:"420px 1fr", gap:"28px", alignItems:"start" }}>
                   <div style={{ display:"flex", flexDirection:"column", gap:"20px" }}>
-                    <LogContributionForm contractAddress={CONTRACT_ADDRESS} contractABI={AcademicLedgerABI.abi} projectId={projectId} onSuccess={() => setRefreshKey(k => k+1)} />
-                    <ManageCollaborators contractAddress={CONTRACT_ADDRESS} contractABI={AcademicLedgerABI.abi} projectId={projectId} />
+                    <LogContributionForm
+                      contractAddress={CONTRACT_ADDRESS}
+                      contractABI={AcademicLedgerABI.abi}
+                      projectId={projectId}
+                      onSuccess={() => setRefreshKey(k => k + 1)}
+                    />
+                    <ManageCollaborators
+                      contractAddress={CONTRACT_ADDRESS}
+                      contractABI={AcademicLedgerABI.abi}
+                      projectId={projectId}
+                    />
                   </div>
-                  <ContributionTimeline contractAddress={CONTRACT_ADDRESS} contractABI={AcademicLedgerABI.abi} projectId={projectId} readOnlyRpcUrl={RPC_URL} refreshKey={refreshKey} />
+                  <ContributionTimeline
+                    contractAddress={CONTRACT_ADDRESS}
+                    contractABI={AcademicLedgerABI.abi}
+                    projectId={projectId}
+                    readOnlyRpcUrl={RPC_URL}
+                    refreshKey={refreshKey}
+                  />
                 </div>
                 <footer style={{ borderTop:"1px solid var(--rule)", paddingTop:"16px", marginTop:"40px", textAlign:"center", fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:"var(--ink-4)" }}>
                   All contribution records are append-only and immutable · No scoring applied · Covenant University FYP · {new Date().getFullYear()}
