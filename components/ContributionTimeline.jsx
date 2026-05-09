@@ -85,6 +85,29 @@ function TimelineEntry({ entry, index, isNew, profile }) {
     timeZone: "UTC", hour12: false
   }) + " UTC";
 
+  const [isHovered, setIsHovered] = useState(false);
+  const [copiedType, setCopiedType] = useState(null); // 'cid' or 'txHash'
+
+  const handleCopy = (text, type) => {
+    navigator.clipboard.writeText(text);
+    setCopiedType(type);
+    setTimeout(() => setCopiedType(null), 2000);
+  };
+
+  // SVG Icons for the Copy Interaction
+  const CopyIcon = () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+    </svg>
+  );
+
+  const CheckIcon = () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12"></polyline>
+    </svg>
+  );
+
   return (
     <div style={{ display: "flex", gap: "16px", marginBottom: "24px",
       animation: isNew ? "slideIn 0.4s ease forwards" : "none" }}>
@@ -99,10 +122,21 @@ function TimelineEntry({ entry, index, isNew, profile }) {
       </div>
 
       {/* Card */}
-      <div style={{ flex: 1, background: "var(--paper)", borderRadius: "8px",
-        borderLeft: `3px solid ${style.bar}`,
-        boxShadow: "0 2px 8px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)",
-        padding: "20px 24px", border: `1px solid ${isNew ? "var(--accent)" : "var(--rule)"}` }}>
+      <div 
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        style={{ 
+          flex: 1, 
+          background: "var(--paper)", 
+          borderRadius: "8px",
+          borderLeft: `3px solid ${style.bar}`,
+          padding: "20px 24px", 
+          border: `1px solid ${isNew ? "var(--accent)" : "var(--rule)"}`,
+          transition: "all 0.2s ease-in-out",
+          transform: isHovered ? "translateY(-2px)" : "translateY(0)",
+          boxShadow: isHovered ? "0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04)" : "0 2px 8px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)",
+        }}
+      >
 
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
@@ -157,34 +191,75 @@ function TimelineEntry({ entry, index, isNew, profile }) {
           </div>
         </div>
 
-        {/* Cryptographic proofs */}
+        {/* Cryptographic Proofs Row (Now with Copy Buttons) */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
           <div>
             <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "var(--ink-4)",
               textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
               IPFS Artifact CID
             </p>
-            <a href={`${GATEWAY}/${entry.cid}`} target="_blank" rel="noreferrer"
-              style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px",
-                color: "var(--accent)", textDecoration: "none", wordBreak: "break-all" }}>
-              {entry.cid.slice(0, 20)}… ↗
-            </a>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <a href={`${GATEWAY}/${entry.cid}`} target="_blank" rel="noreferrer"
+                style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px",
+                  color: "var(--accent)", textDecoration: "none", wordBreak: "break-all" }}>
+                {truncate(entry.cid)} ↗
+              </a>
+              <button onClick={() => handleCopy(entry.cid, 'cid')} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", color: "#9CA3AF", display: "flex", alignItems: "center" }} title="Copy Full CID">
+                {copiedType === 'cid' ? <CheckIcon /> : <CopyIcon />}
+              </button>
+            </div>
           </div>
           <div>
             <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "var(--ink-4)",
               textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
               Sepolia TX Hash
             </p>
-            <button onClick={() => { navigator.clipboard?.writeText(entry.txHash);
-              toast.success("Tx hash copied"); }}
-              style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px",
-                color: "var(--ink-3)", background: "none", border: "none",
-                cursor: "pointer", padding: 0, wordBreak: "break-all" }}>
-              {truncate(entry.txHash)} ↗
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <a href={`https://sepolia.etherscan.io/tx/${entry.txHash}`} target="_blank" rel="noreferrer"
+                style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px",
+                  color: "var(--ink-3)", textDecoration: "none", wordBreak: "break-all" }}>
+                {truncate(entry.txHash)} ↗
+              </a>
+              <button onClick={() => handleCopy(entry.txHash, 'txHash')} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", color: "#9CA3AF", display: "flex", alignItems: "center" }} title="Copy Full Hash">
+                {copiedType === 'txHash' ? <CheckIcon /> : <CopyIcon />}
+              </button>
+            </div>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function EmptyLedgerState() {
+  return (
+    <div style={{ 
+      display: "flex", 
+      flexDirection: "column", 
+      alignItems: "center", 
+      justifyContent: "center",
+      textAlign: "center", 
+      padding: "48px 24px", 
+      background: "var(--paper-2, #F9FAFB)", 
+      borderRadius: "8px", 
+      border: "2px dashed #E5E7EB",
+      marginTop: "16px"
+    }}>
+      {/* Ledger/Archive Icon */}
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: "16px" }}>
+        <path d="M4 22h14a2 2 0 0 0 2-2V7.5L14.5 2H6a2 2 0 0 0-2 2v4"></path>
+        <polyline points="14 2 14 8 20 8"></polyline>
+        <path d="M2 15h10"></path>
+        <path d="M2 18h10"></path>
+        <path d="M2 21h10"></path>
+      </svg>
+      
+      <h3 style={{ fontFamily: "var(--font-lora)", fontSize: "1.1rem", fontWeight: "600", color: "#374151", margin: "0 0 8px 0" }}>
+        No Priority Claims Found
+      </h3>
+      <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "12px", color: "#6B7280", maxWidth: "400px", lineHeight: "1.6", margin: 0 }}>
+        This project ledger is currently empty. Upload a research artifact and sign a transaction to establish your cryptographic proof-of-priority.
+      </p>
     </div>
   );
 }
@@ -337,12 +412,7 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
               ))}
             </div>
           )}
-          {!loading&&!error&&entries.length===0&&(
-            <div style={{textAlign:"center",padding:"48px 0"}}>
-              <p style={{fontFamily:"var(--font-lora)",fontSize:"14px",color:"var(--ink-4)",fontStyle:"italic"}}>No contributions logged for this project yet.</p>
-              <p style={{fontFamily:"var(--font-geist-mono)",fontSize:"11px",color:"var(--ink-4)",marginTop:"8px"}}>The timeline will populate after the first on-chain record.</p>
-            </div>
-          )}
+          {!loading&&!error&&entries.length===0&&<EmptyLedgerState />}
           {entries.length>0&&(
             <div>
               {entries.map((entry,idx)=>{
