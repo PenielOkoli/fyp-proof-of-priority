@@ -77,26 +77,111 @@ function ContributorIdentity({ address, profile }) {
 
 function TimelineEntry({ entry, index, isNew, profile }) {
   const style = ROLE_STYLE[entry.role] ?? DEFAULT_STYLE;
+  const truncate = (str) => str ? `${str.slice(0, 6)}...${str.slice(-4)}` : "";
+  const d = new Date(Number(entry.timestamp) * 1000);
+  const dateUTC = d.toLocaleString("en-GB", {
+    day: "2-digit", month: "long", year: "numeric",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    timeZone: "UTC", hour12: false
+  }) + " UTC";
+
   return (
-    <div style={{display:"flex",gap:0,animation:isNew?"slideIn 0.4s ease forwards":"none"}}>
-      <div style={{width:"44px",flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center"}}>
-        <div style={{width:"26px",height:"26px",borderRadius:"50%",border:"1px solid var(--rule)",background:isNew?"var(--accent-bg)":"var(--paper-2)",color:isNew?"var(--accent)":"var(--ink-4)",fontFamily:"var(--font-geist-mono)",fontSize:"10px",fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{index+1}</div>
-        <div style={{width:"1px",flex:1,background:"var(--rule-light)",marginTop:"4px"}}/>
+    <div style={{ display: "flex", gap: "16px", marginBottom: "24px",
+      animation: isNew ? "slideIn 0.4s ease forwards" : "none" }}>
+      
+      {/* Ledger line & dot */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: "4px" }}>
+        <div style={{ width: "9px", height: "9px", borderRadius: "50%",
+          background: style.bar, border: "2px solid #fff",
+          boxShadow: `0 0 0 1px ${style.bar}` }} />
+        <div style={{ width: "1px", height: "100%",
+          background: "linear-gradient(to bottom, var(--rule), transparent)", marginTop: "4px" }} />
       </div>
-      <div style={{flex:1,marginBottom:"16px",borderRadius:"8px",overflow:"hidden",border:`1px solid ${isNew?"var(--accent)":"var(--rule)"}`,background:"var(--paper)",transition:"border-color 0.5s"}}>
-        <div style={{height:"2px",background:style.bar}}/>
-        <div style={{padding:"14px 16px"}}>
-          <div style={{marginBottom:"10px"}}>
-            <span style={{fontFamily:"var(--font-geist-mono)",fontSize:"11px",fontWeight:600,padding:"3px 8px",borderRadius:"4px",...style.badge}}>{entry.role}</span>
+
+      {/* Card */}
+      <div style={{ flex: 1, background: "var(--paper)", borderRadius: "8px",
+        borderLeft: `3px solid ${style.bar}`,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)",
+        padding: "20px 24px", border: `1px solid ${isNew ? "var(--accent)" : "var(--rule)"}` }}>
+
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
+          <div>
+            <h3 style={{ fontFamily: "var(--font-lora)", fontSize: "1.1rem", fontWeight: "600",
+              color: "var(--ink)", margin: "0 0 4px 0" }}>{dateUTC}</h3>
+            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: "var(--ink-4)", margin: 0 }}>
+              BLOCK TIMESTAMP: <span style={{ color: "var(--ink-2)", fontWeight: "500" }}>
+                {Number(entry.timestamp).toString()}
+              </span>
+            </p>
           </div>
-          <NotaryStamp unixSeconds={entry.timestamp} isNew={isNew}/>
-          <ContributorIdentity address={entry.contributor} profile={profile}/>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:"8px"}}>
-            <a href={`${GATEWAY}/${entry.cid}`} target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:"5px",fontFamily:"var(--font-geist-mono)",fontSize:"11px",color:"var(--ink-3)",textDecoration:"none"}} title={entry.cid}>
-              <svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
-              IPFS: {entry.cid.slice(0,14)}...
+          {isNew && (
+            <span style={{ fontFamily: "var(--font-geist-mono)", fontSize: "10px", fontWeight: "600",
+              letterSpacing: "0.05em", background: "var(--accent-bg)", color: "var(--accent)",
+              padding: "4px 8px", borderRadius: "4px" }}>JUST NOW</span>
+          )}
+        </div>
+
+        {/* Identity & Role */}
+        <div style={{ display: "flex", gap: "32px", marginBottom: "20px",
+          paddingBottom: "16px", borderBottom: "1px dashed var(--rule)" }}>
+          <div>
+            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "var(--ink-4)",
+              textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
+              Registered Identity
+            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontFamily: "var(--font-geist-mono)", fontSize: "13px",
+                color: "var(--ink)", fontWeight: "500" }}>
+                {profile?.name ?? "Unregistered"}
+              </span>
+              <button onClick={() => { navigator.clipboard?.writeText(entry.contributor);
+                toast.success("Address copied"); }}
+                style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px",
+                  color: "var(--ink-4)", background: "var(--paper-2)",
+                  border: "1px solid var(--rule)", padding: "2px 6px",
+                  borderRadius: "4px", cursor: "pointer" }}>
+                {truncate(entry.contributor)}
+              </button>
+            </div>
+          </div>
+          <div>
+            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "var(--ink-4)",
+              textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
+              CRediT Role
+            </p>
+            <span style={{ fontFamily: "var(--font-geist-mono)", fontSize: "12px",
+              fontWeight: "500", padding: "3px 8px", borderRadius: "4px", ...style.badge }}>
+              {entry.role}
+            </span>
+          </div>
+        </div>
+
+        {/* Cryptographic proofs */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+          <div>
+            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "var(--ink-4)",
+              textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
+              IPFS Artifact CID
+            </p>
+            <a href={`${GATEWAY}/${entry.cid}`} target="_blank" rel="noreferrer"
+              style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px",
+                color: "var(--accent)", textDecoration: "none", wordBreak: "break-all" }}>
+              {entry.cid.slice(0, 20)}… ↗
             </a>
-            {entry.txHash && <button onClick={()=>{navigator.clipboard?.writeText(entry.txHash);toast.success("Tx hash copied");}} style={{fontFamily:"var(--font-geist-mono)",fontSize:"10px",color:"var(--ink-4)",background:"none",border:"none",cursor:"pointer",padding:0}} title={entry.txHash}>tx/{truncate(entry.txHash)}</button>}
+          </div>
+          <div>
+            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "var(--ink-4)",
+              textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
+              Sepolia TX Hash
+            </p>
+            <button onClick={() => { navigator.clipboard?.writeText(entry.txHash);
+              toast.success("Tx hash copied"); }}
+              style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px",
+                color: "var(--ink-3)", background: "none", border: "none",
+                cursor: "pointer", padding: 0, wordBreak: "break-all" }}>
+              {truncate(entry.txHash)} ↗
+            </button>
           </div>
         </div>
       </div>
