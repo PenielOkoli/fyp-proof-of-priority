@@ -108,12 +108,20 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
     if (!collabAddr)               return setCollabError("Address is required.");
     if (!isValidAddress(collabAddr)) return setCollabError("Invalid Ethereum address.");
     setCollabError("");
-    const toastId = toast.loading("Confirm in MetaMask…");
     setAuthorizing(true);
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer   = await provider.getSigner();
       const contract = new ethers.Contract(contractAddress, contractABI, signer);
+      
+      // Check if already authorized
+      const isAlreadyAuth = await contract.authorizedCollaborators(projectId, collabAddr);
+      if (isAlreadyAuth) {
+        toast.error("This wallet has already been authorized as a collaborator.");
+        return;
+      }
+      
+      const toastId = toast.loading("Confirm in MetaMask…");
       const tx = await contract.authorizeCollaborator(projectId, collabAddr);
       toast.loading("Transaction pending…", { id: toastId });
       await tx.wait(1);
@@ -122,7 +130,7 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
       await fetchRoster(adminAddress); // refresh roster
     } catch (err) {
       const msg = err?.code === 4001 ? "Rejected in MetaMask." : err?.message ?? "Transaction failed.";
-      toast.error(msg, { id: toastId });
+      toast.error(msg);
     } finally { setAuthorizing(false); }
   };
 
