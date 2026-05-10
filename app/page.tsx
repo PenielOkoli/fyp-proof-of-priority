@@ -1,37 +1,118 @@
-import Link from "next/link";
+"use client";
+import { useState } from "react";
+import { useWallet } from "@/context/WalletContext";
+import WalletBar from "@/components/WalletBar";
+import ProjectSelector from "@/components/ProjectSelector";
+import LogContributionForm from "@/components/LogContributionForm";
+import ManageCollaborators from "@/components/ManageCollaborators";
+import ContributionTimeline from "@/components/ContributionTimeline";
+import RegisterProfileModal from "@/components/RegisterProfileModal";
+import AcademicLedgerABI from "@/contracts/AcademicLedger.json";
 
-export default function Home() {
+const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS!;
+const RPC_URL          = process.env.NEXT_PUBLIC_RPC_URL!;
+
+export default function ProjectPage() {
+  const { isConnected, isSepolia, needsProfile } = useWallet();
+  const [projectId,  setProjectId]  = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const isReady = isConnected && isSepolia;
+
   return (
-    <main className="min-h-screen bg-[#080808] text-white flex flex-col items-center justify-center p-10">
-      <div className="max-w-xl w-full space-y-6">
-        <div className="border-b border-[#1a1a1a] pb-6">
-          <p className="text-[10px] tracking-[0.3em] uppercase text-[#555] mb-2 font-mono">
-            Decentralized Ledger Technology
-          </p>
-          <h1 className="text-4xl font-bold tracking-tight">
-            Proof-of-Priority System
-          </h1>
-          <p className="text-[#555] text-sm mt-2 font-mono">
-            Immutable authorship validation for academic research.
-          </p>
-        </div>
+    <div style={{ minHeight:"100vh", background:"var(--paper)", color:"var(--ink)" }}>
+      <WalletBar />
+      <div style={{ height:"3px", background:"var(--accent)" }} />
 
-        <div className="space-y-3">
-          <p className="text-[#444] text-xs font-mono uppercase tracking-widest">
-            Active Projects
-          </p>
-          <Link
-            href="/project/project-alpha-001"
-            className="flex items-center justify-between w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded-xl px-5 py-4 hover:border-[#00ffa3]/40 transition-colors group"
-          >
+      {isReady && needsProfile && (
+        <RegisterProfileModal
+          contractAddress={CONTRACT_ADDRESS}
+          contractABI={AcademicLedgerABI.abi}
+        />
+      )}
+
+      <div style={{ maxWidth:"1200px", margin:"0 auto", padding:"32px 40px" }}>
+        <header style={{ borderBottom:"1px solid var(--rule)", paddingBottom:"24px", marginBottom:"28px" }}>
+          <div style={{ display:"flex", flexWrap:"wrap", alignItems:"flex-end", justifyContent:"space-between", gap:"16px" }}>
             <div>
-              <p className="text-white font-mono font-semibold">project-alpha-001</p>
-              <p className="text-[#555] text-xs mt-1">Sepolia Testnet</p>
+              <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--accent)", letterSpacing:"0.2em", textTransform:"uppercase", marginBottom:"6px" }}>Decentralised Ledger Technology</p>
+              <h1 style={{ fontFamily:"var(--font-lora)", fontSize:"2rem", fontWeight:600, lineHeight:1.2, color:"var(--ink)", margin:0 }}>Proof-of-Priority System</h1>
+              <p style={{ fontFamily:"var(--font-lora)", fontSize:"0.95rem", color:"var(--ink-3)", fontStyle:"italic", marginTop:"4px" }}>Verifiable Authorship Validation in Academic Research</p>
             </div>
-            <span className="text-[#333] group-hover:text-[#00ffa3] transition-colors text-lg">→</span>
-          </Link>
-        </div>
+            <div style={{ borderLeft:"2px solid var(--accent)", paddingLeft:"12px", textAlign:"right" }}>
+              <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", textTransform:"uppercase", letterSpacing:"0.15em" }}>Network</p>
+              <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"12px", color:"var(--ink-2)", fontWeight:600, marginTop:"2px" }}>Ethereum Sepolia</p>
+              <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", marginTop:"2px" }}>EIP-1559 Testnet</p>
+            </div>
+          </div>
+        </header>
+
+        {!isReady ? (
+          <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"380px", gap:"16px", textAlign:"center" }}>
+            <div style={{ width:"60px", height:"60px", borderRadius:"50%", border:"1px solid var(--rule)", background:"var(--paper-2)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <svg width="26" height="26" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color:"var(--ink-4)" }}>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+              </svg>
+            </div>
+            {!isConnected ? (
+              <>
+                <p style={{ fontFamily:"var(--font-lora)", fontSize:"1.1rem", color:"var(--ink-3)", fontStyle:"italic" }}>Connect your Web3 wallet to begin.</p>
+                <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:"var(--ink-4)", maxWidth:"380px", lineHeight:1.7 }}>Your Ethereum wallet address serves as your cryptographic identity. No username or password required.</p>
+              </>
+            ) : (
+              <>
+                <p style={{ fontFamily:"var(--font-lora)", fontSize:"1.1rem", color:"var(--danger)", fontStyle:"italic" }}>Wrong network detected.</p>
+                <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:"var(--ink-4)" }}>Please switch to Ethereum Sepolia to continue.</p>
+              </>
+            )}
+          </div>
+        ) : (
+          <>
+            <div style={{ marginBottom:"28px" }}>
+              <ProjectSelector
+                contractAddress={CONTRACT_ADDRESS}
+                contractABI={AcademicLedgerABI.abi}
+                currentProjectId={projectId}
+                onProjectChange={setProjectId}
+              />
+            </div>
+
+            {!projectId ? (
+              <div style={{ textAlign:"center", padding:"60px 0" }}>
+                <p style={{ fontFamily:"var(--font-lora)", fontSize:"1rem", fontStyle:"italic", color:"var(--ink-4)" }}>Select a project from the dropdown or create a new one.</p>
+                <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:"var(--ink-4)", marginTop:"8px" }}>Each Project ID maps to an isolated namespace on the smart contract.</p>
+              </div>
+            ) : (
+              <>
+                <div style={{ display:"grid", gridTemplateColumns:"420px 1fr", gap:"28px", alignItems:"start" }}>
+                  <div style={{ display:"flex", flexDirection:"column", gap:"20px" }}>
+                    <LogContributionForm
+                      contractAddress={CONTRACT_ADDRESS}
+                      contractABI={AcademicLedgerABI.abi}
+                      projectId={projectId}
+                      onSuccess={() => setRefreshKey(k => k + 1)}
+                    />
+                    <ManageCollaborators
+                      contractAddress={CONTRACT_ADDRESS}
+                      contractABI={AcademicLedgerABI.abi}
+                      projectId={projectId}
+                    />
+                  </div>
+                  <ContributionTimeline
+                    contractAddress={CONTRACT_ADDRESS}
+                    contractABI={AcademicLedgerABI.abi}
+                    projectId={projectId}
+                    readOnlyRpcUrl={RPC_URL}
+                    refreshKey={refreshKey}
+                  />
+                </div>
+                <footer style={{ borderTop:"1px solid var(--rule)", paddingTop:"16px", marginTop:"40px", textAlign:"center", fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:"var(--ink-4)" }}>
+                  All contribution records are append-only and immutable · No scoring applied · Covenant University FYP · {new Date().getFullYear()}
+                </footer>
+              </>
+            )}
+          </>
+        )}
       </div>
-    </main>
+    </div>
   );
 }
