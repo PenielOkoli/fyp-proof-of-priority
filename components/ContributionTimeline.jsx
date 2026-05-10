@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { ethers } from "ethers";
 import toast from "react-hot-toast";
+import { getFriendlyError } from "@/utils/errorFormatter";
 
 const GATEWAY = process.env.NEXT_PUBLIC_PINATA_GATEWAY ?? "https://gateway.pinata.cloud/ipfs";
 const POLL_INTERVAL = 10000;
@@ -333,7 +334,12 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
         const history=await fetchHistory(contract,provider);
         const cache=await resolveProfiles(history.map(e=>e.contributor),contract,{});
         if(isMounted){prevCountRef.current=history.length;setEntries(history);setProfileCache(cache);setLastRefreshed(new Date());setLoading(false);setIsPolling(true);}
-      }catch(err){if(isMounted){setError(err?.message??"Failed to load.");setLoading(false);}}
+      } catch (err) {
+        if (isMounted) {
+          setError(getFriendlyError(err, "Failed to load contributions."));
+          setLoading(false);
+        }
+      }
     };
     init();
     return()=>{isMounted=false;clearInterval(pollTimerRef.current);};

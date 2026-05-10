@@ -11,6 +11,7 @@ import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import toast from "react-hot-toast";
 import { useWallet } from "@/context/WalletContext";
+import { getFriendlyError } from "@/utils/errorFormatter";
 
 function isValidAddress(addr) { return /^0x[0-9a-fA-F]{40}$/.test(addr); }
 function truncate(addr) { return addr ? `${addr.slice(0,6)}...${addr.slice(-4)}` : "—"; }
@@ -129,7 +130,7 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
       setCollabAddr("");
       await fetchRoster(adminAddress); // refresh roster
     } catch (err) {
-      const msg = err?.code === 4001 ? "Rejected in MetaMask." : err?.message ?? "Transaction failed.";
+      const msg = err?.code === 4001 ? "Rejected in MetaMask." : getFriendlyError(err, "Transaction failed.");
       toast.error(msg);
     } finally { setAuthorizing(false); }
   };
@@ -155,7 +156,7 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
       setIsAdmin(false);
       setTransferred(true);
     } catch (err) {
-      const msg = err?.code === 4001 ? "Rejected in MetaMask." : err?.message ?? "Transaction failed.";
+      const msg = err?.code === 4001 ? "Rejected in MetaMask." : getFriendlyError(err, "Transaction failed.");
       toast.error(msg, { id: toastId });
     } finally { setTransferring(false); }
   };

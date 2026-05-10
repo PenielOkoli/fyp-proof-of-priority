@@ -11,6 +11,7 @@
 
 import { NextResponse } from "next/server";
 import { uploadFileToIPFS } from "@/utils/pinata";
+import { getFriendlyError } from "@/utils/errorFormatter";
 
 export async function POST(request) {
   try {
@@ -27,7 +28,7 @@ export async function POST(request) {
   } catch (err) {
     console.error("[/api/upload] Error:", err);
     return NextResponse.json(
-      { message: err?.message ?? "Internal server error during IPFS upload." },
+      { message: getFriendlyError(err, "Internal server error during IPFS upload.") },
       { status: 500 }
     );
   }

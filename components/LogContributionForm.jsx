@@ -11,6 +11,7 @@ import { useState, useCallback } from "react";
 import { ethers } from "ethers";
 import toast from "react-hot-toast";
 import { useWallet } from "@/context/WalletContext";
+import { getFriendlyError } from "@/utils/errorFormatter";
 
 const CREDIT_ROLES = [
   "Conceptualization","Data Curation","Formal Analysis","Funding Acquisition",
@@ -82,8 +83,9 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
         return;
       }
     } catch (err) {
+      const msg = getFriendlyError(err, "Could not verify authorization.");
       toast.error("Authorization check failed. Please try again.", { id: toastId });
-      setErrorMsg("Could not verify authorization: " + (err?.message ?? "Unknown error"));
+      setErrorMsg("Could not verify authorization: " + msg);
       setPhase(PHASE.ERROR);
       return;
     }
@@ -125,7 +127,7 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
       toast.success("Contribution logged on-chain.", { id: toastId });
       if (typeof onSuccess === "function") onSuccess();
     } catch (err) {
-      const msg = err?.code === 4001 ? "Transaction rejected in MetaMask." : err?.message ?? "Unknown error.";
+      const msg = err?.code === 4001 ? "Transaction rejected in MetaMask." : getFriendlyError(err, "Unknown error.");
       setErrorMsg(msg); setPhase(PHASE.ERROR);
       toast.error(msg, { id: toastId });
     }

@@ -10,6 +10,7 @@ import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import toast from "react-hot-toast";
 import { useWallet } from "@/context/WalletContext";
+import { getFriendlyError } from "@/utils/errorFormatter";
 
 const VALID_RE = /^[a-zA-Z0-9_\-\.]{3,64}$/;
 
@@ -87,7 +88,7 @@ export default function ProjectSelector({ contractAddress, contractABI, onProjec
     } catch (err) {
       const msg = err?.code === 4001
         ? "Transaction rejected."
-        : err?.message ?? "Failed to create project.";
+        : getFriendlyError(err, "Failed to create project.");
       toast.error(msg, { id: toastId });
     } finally {
       setCreating(false);

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
+import { getFriendlyError } from "@/utils/errorFormatter";
 
 const GATEWAY = process.env.NEXT_PUBLIC_PINATA_GATEWAY ?? "https://gateway.pinata.cloud/ipfs";
 
@@ -104,7 +105,7 @@ export default function AuditTrail({ contractAddress, contractABI, projectId, re
       setEntries(parsed);
       setLastRefreshed(new Date());
     } catch (err) {
-      setError(err?.message ?? "Failed to fetch contributions.");
+      setError(getFriendlyError(err, "Failed to fetch contributions."));
     } finally {
       setLoading(false);
     }

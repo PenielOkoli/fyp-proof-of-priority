@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ethers } from "ethers";
 import toast from "react-hot-toast";
 import { useWallet } from "@/context/WalletContext";
+import { getFriendlyError } from "@/utils/errorFormatter";
 
 const ORCID_RE = /^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/;
 
@@ -33,7 +34,7 @@ export default function RegisterProfileModal({ contractAddress, contractABI }) {
       toast.success("Profile registered.", { id: toastId });
       onProfileRegistered(name.trim(), orcid.trim());
     } catch (err) {
-      const msg = err?.code === 4001 ? "Transaction rejected." : err?.message ?? "Registration failed.";
+      const msg = err?.code === 4001 ? "Transaction rejected." : getFriendlyError(err, "Registration failed.");
       toast.error(msg, { id: toastId });
     } finally {
       setSubmitting(false);

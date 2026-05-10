@@ -1,6 +1,7 @@
 "use client";
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
+import { getFriendlyError } from "@/utils/errorFormatter";
 
 const SEPOLIA_CHAIN_ID = "0xaa36a7";
 const WalletContext    = createContext(null);
@@ -60,7 +61,7 @@ export function WalletProvider({ children, contractAddress, contractABI }) {
       const onSepolia = await checkNetwork();
       if (onSepolia) await fetchProfile(addr);
     } catch (err) {
-      setError(err?.code === 4001 ? "Connection rejected." : err?.message ?? "Failed to connect.");
+      setError(err?.code === 4001 ? "Connection rejected." : getFriendlyError(err, "Failed to connect."));
     } finally {
       setIsConnecting(false);
     }
