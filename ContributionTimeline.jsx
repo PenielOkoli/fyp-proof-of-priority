@@ -20,6 +20,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { ethers } from "ethers";
 import toast from "react-hot-toast";
+import { getFriendlyError } from "@/utils/errorFormatter";
 
 const GATEWAY = process.env.NEXT_PUBLIC_PINATA_GATEWAY ?? "https://gateway.pinata.cloud/ipfs";
 
@@ -323,7 +324,7 @@ export default function ContributionTimeline({
 
       } catch (err) {
         if (isMounted) {
-          setError(err?.message ?? "Failed to load contributions.");
+          setError(getFriendlyError(err, "Failed to load contributions."));
           setLoading(false);
         }
       }
@@ -350,7 +351,7 @@ export default function ContributionTimeline({
       setEntries(history);
       setLastRefreshed(new Date());
     } catch (err) {
-      setError(err?.message ?? "Refresh failed.");
+      setError(getFriendlyError(err, "Refresh failed."));
     } finally {
       setLoading(false);
     }

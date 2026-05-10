@@ -360,8 +360,11 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
         const h=await fetchHistory(contractRef.current,providerRef.current);
         const cache=await resolveProfiles(h.map(e=>e.contributor),contractRef.current,profileCache);
         prevCountRef.current=h.length;setEntries(h);setProfileCache(cache);setLastRefreshed(new Date());
-      }catch(err){setError(err?.message??"Refresh failed.");}
-      finally{setLoading(false);}
+      } catch (err) {
+        setError(getFriendlyError(err, "Refresh failed."));
+      } finally {
+        setLoading(false);
+      }
     },2500);
     return()=>clearTimeout(t);
   },[refreshKey,fetchHistory,resolveProfiles,profileCache]);
@@ -373,8 +376,11 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
       const h=await fetchHistory(contractRef.current,providerRef.current);
       const cache=await resolveProfiles(h.map(e=>e.contributor),contractRef.current,profileCache);
       prevCountRef.current=h.length;setEntries(h);setProfileCache(cache);setLastRefreshed(new Date());
-    }catch(err){setError(err?.message??"Refresh failed.");}
-    finally{setLoading(false);}
+    } catch (err) {
+      setError(getFriendlyError(err, "Refresh failed."));
+    } finally {
+      setLoading(false);
+    }
   };
 
   return(
