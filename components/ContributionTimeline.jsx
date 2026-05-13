@@ -201,12 +201,22 @@ export default function ContributionTimeline({
           log.transactionHash,
         ])
       );
+      const txByContributorTimestamp = new Map(
+        allLogs.map(log => [
+          `${log.args.contributor.toLowerCase()}-${log.args.timestamp.toString()}`,
+          log.transactionHash,
+        ])
+      );
 
       if (storedEntries.length > 0) {
-        return storedEntries.map(entry => ({
-          ...entry,
-          txHash: txByKey.get(`${entry.contributor.toLowerCase()}-${entry.timestamp.toString()}-${entry.cid}`) ?? "",
-        }));
+        return storedEntries.map(entry => {
+          const exactKey = `${entry.contributor.toLowerCase()}-${entry.timestamp.toString()}-${entry.cid}`;
+          const fallbackKey = `${entry.contributor.toLowerCase()}-${entry.timestamp.toString()}`;
+          return {
+            ...entry,
+            txHash: txByKey.get(exactKey) ?? txByContributorTimestamp.get(fallbackKey) ?? "",
+          };
+        });
       }
 
       return allLogs
