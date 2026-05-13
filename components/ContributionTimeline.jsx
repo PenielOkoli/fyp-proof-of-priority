@@ -118,32 +118,47 @@ export default function ContributionTimeline({
     return updates;
   }, []);
 
-  const fetchDisputeEvents = useCallback(async (contract, projId) => {
-    if (eventQueriesDisabledRef.current) return disputedEntriesRef.current;
+  const fetchDisputeEvents = useCallback(async (contract, projId, entries = []) => {
+    const allEvents = {};
+    const shouldTryOnChain = entries.length > 0;
 
-    try {
-      const currentBlock = await contract.provider.getBlockNumber();
-      const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 10823551);
-      const fromBlock = Math.max(deployBlock, 0);
-      const allEvents = {};
+    if (!eventQueriesDisabledRef.current) {
+      try {
+        const currentBlock = await contract.provider.getBlockNumber();
+        const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 10823551);
+        const fromBlock = Math.max(deployBlock, 0);
 
-      const filter = contract.filters.ContributionDisputed(projId);
-      let logs = await fetchLogsInRanges(contract, filter, fromBlock, currentBlock);
+        const filter = contract.filters.ContributionDisputed(projId);
+        let logs = await fetchLogsInRanges(contract, filter, fromBlock, currentBlock);
 
-      if (logs.length === 0) {
-        const fallbackLogs = await fetchLogsInRanges(contract, contract.filters.ContributionDisputed(), fromBlock, currentBlock);
-        logs = fallbackLogs.filter(log => log.args.projectId === projId);
+        if (logs.length === 0) {
+          const fallbackLogs = await fetchLogsInRanges(contract, contract.filters.ContributionDisputed(), fromBlock, currentBlock);
+          logs = fallbackLogs.filter(log => log.args.projectId === projId);
+        }
+
+        logs.forEach(log => {
+          allEvents[log.args.contributionHash] = log.args.reason;
+        });
+      } catch {
+        eventQueriesDisabledRef.current = true;
       }
-
-      logs.forEach(log => {
-        allEvents[log.args.contributionHash] = log.args.reason;
-      });
-
-      return allEvents;
-    } catch {
-      eventQueriesDisabledRef.current = true;
-      return disputedEntriesRef.current;
     }
+
+    if (Object.keys(allEvents).length === 0 && shouldTryOnChain) {
+      await Promise.all(entries.map(async (entry) => {
+        try {
+          const disputed = await contract.checkIfDisputed(projId, entry.contributor, entry.timestamp);
+          if (disputed) {
+            const hash = buildContributionHash(projId, entry.contributor, entry.timestamp);
+            allEvents[hash] = "";
+          }
+        } catch {
+          // ignore failures from on-chain lookup and preserve any loaded events
+        }
+      }));
+    }
+
+    return allEvents;
   }, []);
 
   const fetchFinalizationStatus = useCallback(async (contract, projId) => {
@@ -339,7 +354,7 @@ export default function ContributionTimeline({
           .catch(() => { });
       }
 
-      const disputes = await fetchDisputeEvents(contractRef.current, projectId);
+      const disputes = await fetchDisputeEvents(contractRef.current, projectId, history);
       if (isMountedRef.current) mergeDisputedEntries(disputes);
 
       const finStatus = await fetchFinalizationStatus(contractRef.current, projectId);
@@ -384,7 +399,7 @@ export default function ContributionTimeline({
         setProfileCache(profileResult);
       }
 
-      const disputes = await fetchDisputeEvents(contractRef.current, projectId);
+      const disputes = await fetchDisputeEvents(contractRef.current, projectId, h);
       if (isMountedRef.current) mergeDisputedEntries(disputes);
 
       const finStatus = await fetchFinalizationStatus(contractRef.current, projectId);
@@ -447,7 +462,7 @@ export default function ContributionTimeline({
           setProfileCache(profileResult);
         }
 
-        const disputes = await fetchDisputeEvents(contract, projectId);
+        const disputes = await fetchDisputeEvents(contract, projectId, history);
       if (isMountedRef.current) mergeDisputedEntries(disputes);
         const finStatus = await fetchFinalizationStatus(contract, projectId);
         if (isMountedRef.current) setFinalizationStatus(finStatus);
@@ -649,7 +664,7 @@ export default function ContributionTimeline({
               {entries.map(entry => {
                 const key = (entry.txHash || entry.cid) + "-" + entry.timestamp;
                 const hash = getContributionHash(entry.contributor, entry.timestamp);
-                const isDisputed = !!disputedEntries[hash];
+                const isDisputed = Object.prototype.hasOwnProperty.call(disputedEntries, hash);
                 const disputeReason = disputedEntries[hash] || null;
 
                 return (
