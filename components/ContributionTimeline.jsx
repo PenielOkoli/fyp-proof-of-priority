@@ -25,60 +25,8 @@ const ROLE_STYLE = {
 const DEFAULT_STYLE = { bar:"#2D6A4F", badge:{ background:"#EBF5EF", color:"#1B4332", border:"1px solid #A8D8BE" } };
 function truncate(addr) { return addr ? addr.slice(0,6)+"..."+addr.slice(-4) : "-"; }
 
-function NotaryStamp({ unixSeconds, isNew }) {
-  const d = new Date(Number(unixSeconds)*1000);
-  const dateStr = d.toLocaleDateString("en-GB",{day:"2-digit",month:"long",year:"numeric"});
-  const timeStr = d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
-  return (
-    <div style={{border:`1px solid ${isNew?"var(--accent)":"var(--rule)"}`,borderLeft:`3px solid ${isNew?"var(--accent)":"var(--ink-4)"}`,borderRadius:"4px",padding:"10px 14px",background:isNew?"var(--accent-bg)":"var(--paper-2)",marginBottom:"10px",transition:"all 0.5s"}}>
-      <div style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"5px"}}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{color:isNew?"var(--accent)":"var(--ink-4)",flexShrink:0}}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
-        </svg>
-        <span style={{fontFamily:"var(--font-geist-mono)",fontSize:"9px",color:isNew?"var(--accent)":"var(--ink-4)",textTransform:"uppercase",letterSpacing:"0.2em",fontWeight:700}}>Cryptographic Timestamp</span>
-        {isNew && <span style={{fontSize:"8px",fontWeight:700,background:"var(--accent)",color:"#fff",padding:"1px 5px",borderRadius:"3px"}}>JUST NOW</span>}
-      </div>
-      <div style={{fontFamily:"var(--font-lora)",fontWeight:600,fontSize:"14px",color:"var(--ink)",marginBottom:"1px"}}>{dateStr}</div>
-      <div style={{fontFamily:"var(--font-geist-mono)",fontSize:"13px",color:"var(--ink-2)",marginBottom:"5px",letterSpacing:"0.04em"}}>{timeStr} UTC</div>
-      <div style={{fontFamily:"var(--font-geist-mono)",fontSize:"9px",color:"var(--ink-4)"}}>block.timestamp: {Number(unixSeconds).toString()}</div>
-    </div>
-  );
-}
-
-function ContributorIdentity({ address, profile }) {
-  const has = profile && profile.name;
-  return (
-    <div style={{display:"flex",alignItems:"center",gap:"8px",padding:"8px 0",borderTop:"1px solid var(--rule-light)",borderBottom:"1px solid var(--rule-light)",marginBottom:"8px"}}>
-      <div style={{width:"28px",height:"28px",borderRadius:"50%",background:has?"var(--accent-bg)":"var(--paper-3)",border:`1px solid ${has?"#A8D8BE":"var(--rule)"}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-        {has ? (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{color:"var(--accent)"}}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>
-        ) : (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{color:"var(--ink-4)"}}><path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
-        )}
-      </div>
-      <div style={{minWidth:0}}>
-        {has ? (
-          <>
-            <p style={{fontFamily:"var(--font-geist-sans)",fontSize:"13px",fontWeight:700,color:"var(--ink)",marginBottom:"2px"}}>{profile.name}</p>
-            <div style={{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}}>
-              <span style={{fontFamily:"var(--font-geist-mono)",fontSize:"9px",color:"var(--accent)",background:"var(--accent-bg)",border:"1px solid #A8D8BE",padding:"1px 6px",borderRadius:"3px",fontWeight:600}}>ORCID {profile.orcid}</span>
-              <button onClick={()=>{navigator.clipboard?.writeText(address);toast.success("Address copied");}} style={{fontFamily:"var(--font-geist-mono)",fontSize:"9px",color:"var(--ink-4)",background:"none",border:"none",cursor:"pointer",padding:0}} title={address}>{truncate(address)}</button>
-            </div>
-          </>
-        ) : (
-          <>
-            <p style={{fontFamily:"var(--font-geist-mono)",fontSize:"9px",color:"var(--ink-4)",textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:"2px"}}>Wallet Identity (msg.sender)</p>
-            <button onClick={()=>{navigator.clipboard?.writeText(address);toast.success("Address copied");}} style={{fontFamily:"var(--font-geist-mono)",fontSize:"11px",fontWeight:600,color:"var(--ink-2)",background:"none",border:"none",cursor:"pointer",padding:0}} title={address}>{address}</button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function TimelineEntry({ entry, index, isNew, profile }) {
   const style = ROLE_STYLE[entry.role] ?? DEFAULT_STYLE;
-  const truncate = (str) => str ? `${str.slice(0, 6)}...${str.slice(-4)}` : "";
   const d = new Date(Number(entry.timestamp) * 1000);
   const dateUTC = d.toLocaleString("en-GB", {
     day: "2-digit", month: "long", year: "numeric",
@@ -87,7 +35,7 @@ function TimelineEntry({ entry, index, isNew, profile }) {
   }) + " UTC";
 
   const [isHovered, setIsHovered] = useState(false);
-  const [copiedType, setCopiedType] = useState(null); // 'cid' or 'txHash'
+  const [copiedType, setCopiedType] = useState(null);
 
   const handleCopy = (text, type) => {
     navigator.clipboard.writeText(text);
@@ -95,7 +43,6 @@ function TimelineEntry({ entry, index, isNew, profile }) {
     setTimeout(() => setCopiedType(null), 2000);
   };
 
-  // SVG Icons for the Copy Interaction
   const CopyIcon = () => (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
@@ -112,8 +59,6 @@ function TimelineEntry({ entry, index, isNew, profile }) {
   return (
     <div style={{ display: "flex", gap: "16px", marginBottom: "24px",
       animation: isNew ? "slideIn 0.4s ease forwards" : "none" }}>
-      
-      {/* Ledger line & dot */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: "4px" }}>
         <div style={{ width: "9px", height: "9px", borderRadius: "50%",
           background: style.bar, border: "2px solid #fff",
@@ -122,24 +67,21 @@ function TimelineEntry({ entry, index, isNew, profile }) {
           background: "linear-gradient(to bottom, var(--rule), transparent)", marginTop: "4px" }} />
       </div>
 
-      {/* Card */}
-      <div 
+      <div
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        style={{ 
-          flex: 1, 
-          background: "var(--paper)", 
+        style={{
+          flex: 1,
+          background: "var(--paper)",
           borderRadius: "8px",
           borderLeft: `3px solid ${style.bar}`,
-          padding: "20px 24px", 
+          padding: "20px 24px",
           border: `1px solid ${isNew ? "var(--accent)" : "var(--rule)"}`,
           transition: "all 0.2s ease-in-out",
           transform: isHovered ? "translateY(-2px)" : "translateY(0)",
-          boxShadow: isHovered ? "0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04)" : "0 2px 8px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)",
+          boxShadow: isHovered ? "0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -2px rgba(0,0,0,0.04)" : "0 2px 8px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)",
         }}
       >
-
-        {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
           <div>
             <h3 style={{ fontFamily: "var(--font-lora)", fontSize: "1.1rem", fontWeight: "600",
@@ -157,7 +99,6 @@ function TimelineEntry({ entry, index, isNew, profile }) {
           )}
         </div>
 
-        {/* Identity & Role */}
         <div style={{ display: "flex", gap: "32px", marginBottom: "20px",
           paddingBottom: "16px", borderBottom: "1px dashed var(--rule)" }}>
           <div>
@@ -192,7 +133,6 @@ function TimelineEntry({ entry, index, isNew, profile }) {
           </div>
         </div>
 
-        {/* Cryptographic Proofs Row (Now with Copy Buttons) */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
           <div>
             <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "var(--ink-4)",
@@ -234,27 +174,16 @@ function TimelineEntry({ entry, index, isNew, profile }) {
 
 function EmptyLedgerState() {
   return (
-    <div style={{ 
-      display: "flex", 
-      flexDirection: "column", 
-      alignItems: "center", 
-      justifyContent: "center",
-      textAlign: "center", 
-      padding: "48px 24px", 
-      background: "var(--paper-2, #F9FAFB)", 
-      borderRadius: "8px", 
-      border: "2px dashed #E5E7EB",
-      marginTop: "16px"
+    <div style={{
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      textAlign: "center", padding: "48px 24px", background: "var(--paper-2, #F9FAFB)",
+      borderRadius: "8px", border: "2px dashed #E5E7EB", marginTop: "16px"
     }}>
-      {/* Ledger/Archive Icon */}
       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: "16px" }}>
         <path d="M4 22h14a2 2 0 0 0 2-2V7.5L14.5 2H6a2 2 0 0 0-2 2v4"></path>
         <polyline points="14 2 14 8 20 8"></polyline>
-        <path d="M2 15h10"></path>
-        <path d="M2 18h10"></path>
-        <path d="M2 21h10"></path>
+        <path d="M2 15h10"></path><path d="M2 18h10"></path><path d="M2 21h10"></path>
       </svg>
-      
       <h3 style={{ fontFamily: "var(--font-lora)", fontSize: "1.1rem", fontWeight: "600", color: "#374151", margin: "0 0 8px 0" }}>
         No Priority Claims Found
       </h3>
@@ -272,7 +201,12 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
   const [error,setError]=useState("");
   const [lastRefreshed,setLastRefreshed]=useState(null);
   const [isPolling,setIsPolling]=useState(false);
+  // profileCache is kept in both state (for renders) and a ref (for non-reactive reads
+  // inside callbacks). Reading from the ref avoids adding profileCache to useCallback
+  // dependency arrays, which was the root cause of the infinite re-render loop.
   const [profileCache,setProfileCache]=useState({});
+  const profileCacheRef=useRef({});
+
   const contractRef=useRef(null),providerRef=useRef(null),pollTimerRef=useRef(null),prevCountRef=useRef(0);
 
   const getProvider=useCallback(()=>{
@@ -281,7 +215,10 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
     throw new Error("No provider available.");
   },[readOnlyRpcUrl]);
 
-  const resolveProfiles=useCallback(async(addresses,contract,currentCache)=>{
+  // resolveProfiles reads profileCacheRef (not state) so it never needs
+  // profileCache in its dependency array.
+  const resolveProfiles=useCallback(async(addresses,contract)=>{
+    const currentCache=profileCacheRef.current;
     const unique=[...new Set(addresses)].filter(a=>!(a in currentCache));
     if(unique.length===0) return currentCache;
     const updates={...currentCache};
@@ -290,13 +227,14 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
       catch{ updates[addr]=null; }
     }));
     return updates;
+  // No profileCache dependency — we read the ref instead.
   },[]);
 
   const fetchHistory=useCallback(async(contract,provider,projId)=>{
     const currentBlock=await provider.getBlockNumber();
     const deployBlock=Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK||10823551);
     const fromBlock=Math.max(deployBlock,0);
-    const CHUNK=9; 
+    const CHUNK=9;
     let allLogs=[];
     const filter=contract.filters.ContributionLogged(projId);
     for(let from=fromBlock;from<=currentBlock;from+=CHUNK){
@@ -307,75 +245,98 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
       .sort((a,b)=>Number(b.timestamp)-Number(a.timestamp));
   },[]);
 
+  // poll reads profileCacheRef, not profileCache state, so it is not listed
+  // as a dependency. This prevents the cycle:
+  //   poll updates profileCache → profileCache changes → poll recreated →
+  //   polling useEffect reruns → interval reset → poll fires immediately → …
   const poll=useCallback(async()=>{
     if(!contractRef.current||!providerRef.current) return;
     try{
       const history=await fetchHistory(contractRef.current,providerRef.current,projectId);
       const prevCount=prevCountRef.current;
-      
+
       if(history.length>prevCount&&prevCount>0){
         const added=history.slice(0,history.length-prevCount);
         setNewIds(prev=>{const s=new Set(prev);added.forEach(e=>s.add(e.txHash+"-"+e.timestamp));return s;});
         added.forEach(e=>setTimeout(()=>setNewIds(prev=>{const s=new Set(prev);s.delete(e.txHash+"-"+e.timestamp);return s;}),12000));
         toast.success("New contribution logged on-chain.",{style:{background:"var(--paper)",border:"1px solid var(--rule)",color:"var(--accent)"}});
       }
-      
+
       prevCountRef.current=history.length;
       setEntries(history);
       setLastRefreshed(new Date());
-      
+
       const newAddrs=history.map(e=>e.contributor);
-      const uncached=[...new Set(newAddrs)].filter(a=>!(a in profileCache));
+      const uncached=[...new Set(newAddrs)].filter(a=>!(a in profileCacheRef.current));
       if(uncached.length>0){
-        resolveProfiles(newAddrs,contractRef.current,profileCache).then(setProfileCache).catch(()=>{});
+        resolveProfiles(newAddrs,contractRef.current).then(updated=>{
+          profileCacheRef.current=updated;
+          setProfileCache(updated);
+        }).catch(()=>{});
       }
     }catch{}
-  },[projectId,fetchHistory,resolveProfiles,profileCache]);
+  // fetchHistory and resolveProfiles are stable (no changing deps).
+  // projectId is the only value here that can legitimately change.
+  },[projectId,fetchHistory,resolveProfiles]);
 
+  // ── Initial load — runs once per [contractAddress, contractABI, projectId] change ──
   useEffect(()=>{
     if(!contractAddress||!contractABI||!projectId) return;
     let isMounted=true;
-    setEntries([]);setLoading(true);setError("");setIsPolling(false);setProfileCache({});prevCountRef.current=0;
+    setEntries([]);setLoading(true);setError("");setIsPolling(false);
+    // Reset profile cache for the new project.
+    profileCacheRef.current={};
+    setProfileCache({});
+    prevCountRef.current=0;
     clearInterval(pollTimerRef.current);
-    
+
     const init=async()=>{
       try{
         const provider=getProvider();
         providerRef.current=provider;
         const contract=new ethers.Contract(contractAddress,contractABI,provider);
         contractRef.current=contract;
-        
+
         const history=await fetchHistory(contract,provider,projectId);
         if(!isMounted) return;
-        
+
         prevCountRef.current=history.length;
         setEntries(history);
         setLastRefreshed(new Date());
         setLoading(false);
         setIsPolling(true);
-        
+
         const contributors=history.map(e=>e.contributor);
-        resolveProfiles(contributors,contract,{})
-          .then(cache=>{if(isMounted) setProfileCache(cache);})
+        resolveProfiles(contributors,contract)
+          .then(cache=>{
+            if(!isMounted) return;
+            profileCacheRef.current=cache;
+            setProfileCache(cache);
+          })
           .catch(()=>{});
       } catch (err) {
-        if (isMounted) {
-          setError(getFriendlyError(err, "Failed to load contributions."));
+        if(isMounted){
+          setError(getFriendlyError(err,"Failed to load contributions."));
           setLoading(false);
         }
       }
     };
-    
+
     init();
     return()=>{isMounted=false;clearInterval(pollTimerRef.current);};
-  },[contractAddress,contractABI,projectId,getProvider,fetchHistory,resolveProfiles]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[contractAddress,contractABI,projectId]);
+  // NOTE: getProvider, fetchHistory, resolveProfiles are intentionally omitted —
+  // they are stable callbacks whose identity never changes after mount.
 
+  // ── Polling interval — only restarted when isPolling or poll changes ──
   useEffect(()=>{
     if(!isPolling) return;
     pollTimerRef.current=setInterval(poll,POLL_INTERVAL);
     return()=>clearInterval(pollTimerRef.current);
   },[isPolling,poll]);
 
+  // ── External refresh trigger (e.g. after a new submission) ──
   useEffect(()=>{
     if(!refreshKey||refreshKey===0) return;
     if(!contractRef.current||!providerRef.current) return;
@@ -388,18 +349,23 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
         setEntries(h);
         setLastRefreshed(new Date());
         setLoading(false);
-        
+
         const contributors=h.map(e=>e.contributor);
-        resolveProfiles(contributors,contractRef.current,profileCache)
-          .then(cache=>setProfileCache(cache))
+        // Read latest cache from ref — no state dep needed.
+        resolveProfiles(contributors,contractRef.current)
+          .then(cache=>{
+            profileCacheRef.current=cache;
+            setProfileCache(cache);
+          })
           .catch(()=>{});
       } catch (err) {
-        setError(getFriendlyError(err, "Refresh failed."));
+        setError(getFriendlyError(err,"Refresh failed."));
         setLoading(false);
       }
     },2500);
     return()=>clearTimeout(t);
-  },[refreshKey,projectId,fetchHistory,resolveProfiles,profileCache]);
+  // fetchHistory and resolveProfiles are stable; projectId is the live value.
+  },[refreshKey,projectId,fetchHistory,resolveProfiles]);
 
   const handleRefresh=async()=>{
     if(!contractRef.current||!providerRef.current) return;
@@ -411,13 +377,16 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
       setEntries(h);
       setLastRefreshed(new Date());
       setLoading(false);
-      
+
       const contributors=h.map(e=>e.contributor);
-      resolveProfiles(contributors,contractRef.current,profileCache)
-        .then(cache=>setProfileCache(cache))
+      resolveProfiles(contributors,contractRef.current)
+        .then(cache=>{
+          profileCacheRef.current=cache;
+          setProfileCache(cache);
+        })
         .catch(()=>{});
     } catch (err) {
-      setError(getFriendlyError(err, "Refresh failed."));
+      setError(getFriendlyError(err,"Refresh failed."));
       setLoading(false);
     }
   };
@@ -452,7 +421,7 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
               <div style={{height:"1px",flex:1,background:"var(--rule-light)"}}/>
             </div>
           )}
-          {error&&<div style={{background:"var(--danger-bg)",border:"1px solid #F5C6CB",color:"var(--danger)",borderRadius:"6px",padding:"9px 12px",fontSize:"12px",marginBottom:"12px",display:"flex",gap:"8px"}}><span>x</span><span style={{lineHeight:1.5}}>{error}</span></div>}
+          {error&&<div style={{background:"var(--danger-bg)",border:"1px solid #F5C6CB",color:"var(--danger)",borderRadius:"6px",padding:"9px 12px",fontSize:"12px",marginBottom:"12px",display:"flex",gap:"8px"}}><span>✕</span><span style={{lineHeight:1.5}}>{error}</span></div>}
           {loading&&entries.length===0&&(
             <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
               {[...Array(3)].map((_,i)=>(
