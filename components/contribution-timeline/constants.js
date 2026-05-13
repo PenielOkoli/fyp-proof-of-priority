@@ -1,7 +1,7 @@
 export const GATEWAY = process.env.NEXT_PUBLIC_PINATA_GATEWAY ?? "https://gateway.pinata.cloud/ipfs";
 export const POLL_INTERVAL = 30000;
-export const EVENT_QUERY_CHUNK_SIZE = 500;
-export const MIN_EVENT_QUERY_CHUNK_SIZE = 25;
+export const EVENT_QUERY_CHUNK_SIZE = 10;
+export const MIN_EVENT_QUERY_CHUNK_SIZE = 5;
 export const DEFAULT_FINALIZATION_DAYS = 7;
 export const SECONDS_PER_DAY = 86400;
 

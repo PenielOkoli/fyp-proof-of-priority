@@ -177,8 +177,15 @@ export default function ContributionTimeline({
       const currentBlock = await provider.getBlockNumber();
       const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 10823551);
       const fromBlock = Math.max(deployBlock, 0);
-      const filter = contract.filters.ContributionLogged(projId);
-      const allLogs = await fetchLogsInRanges(contract, filter, fromBlock, currentBlock);
+      const primaryFilter = contract.filters.ContributionLogged(projId);
+      let allLogs = await fetchLogsInRanges(contract, primaryFilter, fromBlock, currentBlock);
+
+      if (allLogs.length === 0 && storedEntries.length > 0) {
+        // Some RPC providers may not support filtering on string-indexed event topics reliably.
+        // Retry by loading all ContributionLogged events in range and filtering client-side.
+        const fallbackLogs = await fetchLogsInRanges(contract, contract.filters.ContributionLogged(), fromBlock, currentBlock);
+        allLogs = fallbackLogs.filter(log => log.args.projectId === projId);
+      }
 
       if (allLogs.length === 0) return storedEntries;
 
