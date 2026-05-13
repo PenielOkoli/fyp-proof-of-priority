@@ -21,7 +21,7 @@ export function formatCountdown(deadline) {
 }
 
 export function getContributionHash(projectId, contributor, timestamp) {
-  return ethers.id(
+  return ethers.keccak256(
     ethers.solidityPacked(["string", "address", "uint256"], [projectId, contributor, timestamp])
   );
 }
