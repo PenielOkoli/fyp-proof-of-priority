@@ -56,6 +56,12 @@ export default function ContributionTimeline({
   const pollInFlightRef = useRef(false);
   const refreshInFlightRef = useRef(false);
   const eventQueriesDisabledRef = useRef(false);
+  const entriesRef = useRef([]);
+
+  const updateEntries = useCallback((nextEntries) => {
+    entriesRef.current = nextEntries;
+    setEntries(nextEntries);
+  }, []);
 
   const abiString = useMemo(() => JSON.stringify(contractABI), [contractABI]);
   const supportsEditableFinalizationWindow = useMemo(() => {
@@ -207,6 +213,18 @@ export default function ContributionTimeline({
           log.transactionHash,
         ])
       );
+      const previousTxByKey = new Map(
+        entriesRef.current.map(entry => [
+          `${entry.contributor.toLowerCase()}-${entry.timestamp.toString()}-${entry.cid}`,
+          entry.txHash,
+        ])
+      );
+      const previousTxByContributorTimestamp = new Map(
+        entriesRef.current.map(entry => [
+          `${entry.contributor.toLowerCase()}-${entry.timestamp.toString()}`,
+          entry.txHash,
+        ])
+      );
 
       if (storedEntries.length > 0) {
         return storedEntries.map(entry => {
@@ -214,7 +232,12 @@ export default function ContributionTimeline({
           const fallbackKey = `${entry.contributor.toLowerCase()}-${entry.timestamp.toString()}`;
           return {
             ...entry,
-            txHash: txByKey.get(exactKey) ?? txByContributorTimestamp.get(fallbackKey) ?? "",
+            txHash:
+              txByKey.get(exactKey)
+              ?? txByContributorTimestamp.get(fallbackKey)
+              ?? previousTxByKey.get(exactKey)
+              ?? previousTxByContributorTimestamp.get(fallbackKey)
+              ?? "",
           };
         });
       }
@@ -269,7 +292,7 @@ export default function ContributionTimeline({
       }
 
       prevCountRef.current = history.length;
-      setEntries(history);
+      updateEntries(history);
       setLastRefreshed(new Date());
 
       const contributors = history.map(e => e.contributor);
@@ -304,6 +327,7 @@ export default function ContributionTimeline({
     fetchHistory,
     projectId,
     resolveProfiles,
+    updateEntries,
   ]);
 
   const refreshData = useCallback(async (fallbackMessage) => {
@@ -317,7 +341,7 @@ export default function ContributionTimeline({
       if (!h) return;
 
       prevCountRef.current = h.length;
-      setEntries(h);
+      updateEntries(h);
       setLastRefreshed(new Date());
       setLoading(false);
 
@@ -349,6 +373,7 @@ export default function ContributionTimeline({
     fetchHistory,
     projectId,
     resolveProfiles,
+    updateEntries,
   ]);
 
   useEffect(() => {
@@ -377,7 +402,7 @@ export default function ContributionTimeline({
         if (!isMountedRef.current) return;
 
         prevCountRef.current = history.length;
-        setEntries(history);
+        updateEntries(history);
         setLastRefreshed(new Date());
         setLoading(false);
         setIsPolling(true);
