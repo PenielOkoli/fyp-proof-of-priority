@@ -1,452 +1,609 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
 import toast from "react-hot-toast";
 import { getFriendlyError } from "@/utils/errorFormatter";
+import {
+  DEFAULT_FINALIZATION_DAYS,
+  EVENT_QUERY_CHUNK_SIZE,
+  POLL_INTERVAL,
+  SECONDS_PER_DAY,
+} from "./contribution-timeline/constants";
+import EmptyLedgerState from "./contribution-timeline/EmptyLedgerState";
+import FinalizationBanner from "./contribution-timeline/FinalizationBanner";
+import TimelineEntry from "./contribution-timeline/TimelineEntry";
+import TimelineHeader from "./contribution-timeline/TimelineHeader";
+import TimelineSkeleton from "./contribution-timeline/TimelineSkeleton";
+import { getContributionHash as buildContributionHash } from "./contribution-timeline/utils";
 
-const GATEWAY = process.env.NEXT_PUBLIC_PINATA_GATEWAY ?? "https://gateway.pinata.cloud/ipfs";
-const POLL_INTERVAL = 10000;
-const ROLE_STYLE = {
-  "Conceptualization":{ bar:"#7C5CBF", badge:{ background:"#F4F0FB", color:"#4A3580", border:"1px solid #D5C8F0" } },
-  "Data Curation":{ bar:"#1E7BA0", badge:{ background:"#EBF6FA", color:"#0E4F6A", border:"1px solid #B8DFF0" } },
-  "Formal Analysis":{ bar:"#2563A8", badge:{ background:"#EBF1FB", color:"#153E78", border:"1px solid #B8D0F0" } },
-  "Funding Acquisition":{ bar:"#A06B10", badge:{ background:"#FDF6E8", color:"#6B4208", border:"1px solid #F0D8A0" } },
-  "Investigation":{ bar:"#1A8070", badge:{ background:"#EBF7F5", color:"#0E5448", border:"1px solid #A8DDD8" } },
-  "Methodology":{ bar:"#1A7A90", badge:{ background:"#EBF6FA", color:"#0E4F60", border:"1px solid #A8D8E8" } },
-  "Project Administration":{ bar:"#A04070", badge:{ background:"#FBF0F5", color:"#6A2048", border:"1px solid #EDB8D0" } },
-  "Resources":{ bar:"#A05020", badge:{ background:"#FDF3EC", color:"#6A3010", border:"1px solid #F0C8A0" } },
-  "Software":{ bar:"#2D6A4F", badge:{ background:"#EBF5EF", color:"#1B4332", border:"1px solid #A8D8BE" } },
-  "Supervision":{ bar:"#6040A0", badge:{ background:"#F3F0FB", color:"#3A206A", border:"1px solid #C8B8F0" } },
-  "Validation":{ bar:"#607020", badge:{ background:"#F6F8EC", color:"#3A4810", border:"1px solid #D0D8A0" } },
-  "Visualization":{ bar:"#903080", badge:{ background:"#FAF0F8", color:"#601050", border:"1px solid #E8B8E0" } },
-  "Writing \u2013 Original Draft":{ bar:"#9B2335", badge:{ background:"#FDF2F4", color:"#6A0F1E", border:"1px solid #F0B8C0" } },
-  "Writing \u2013 Review & Editing":{ bar:"#3D4FA0", badge:{ background:"#EEF0FA", color:"#232E6A", border:"1px solid #B8C0F0" } },
-};
-const DEFAULT_STYLE = { bar:"#2D6A4F", badge:{ background:"#EBF5EF", color:"#1B4332", border:"1px solid #A8D8BE" } };
-function truncate(addr) { return addr ? addr.slice(0,6)+"..."+addr.slice(-4) : "-"; }
-
-function TimelineEntry({ entry, index, isNew, profile }) {
-  const style = ROLE_STYLE[entry.role] ?? DEFAULT_STYLE;
-  const d = new Date(Number(entry.timestamp) * 1000);
-  const dateUTC = d.toLocaleString("en-GB", {
-    day: "2-digit", month: "long", year: "numeric",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-    timeZone: "UTC", hour12: false
-  }) + " UTC";
-
-  const [isHovered, setIsHovered] = useState(false);
-  const [copiedType, setCopiedType] = useState(null);
-
-  const handleCopy = (text, type) => {
-    navigator.clipboard.writeText(text);
-    setCopiedType(type);
-    setTimeout(() => setCopiedType(null), 2000);
-  };
-
-  const CopyIcon = () => (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-    </svg>
-  );
-
-  const CheckIcon = () => (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="20 6 9 17 4 12"></polyline>
-    </svg>
-  );
-
-  return (
-    <div style={{ display: "flex", gap: "16px", marginBottom: "24px",
-      animation: isNew ? "slideIn 0.4s ease forwards" : "none" }}>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: "4px" }}>
-        <div style={{ width: "9px", height: "9px", borderRadius: "50%",
-          background: style.bar, border: "2px solid #fff",
-          boxShadow: `0 0 0 1px ${style.bar}` }} />
-        <div style={{ width: "1px", height: "100%",
-          background: "linear-gradient(to bottom, var(--rule), transparent)", marginTop: "4px" }} />
-      </div>
-
-      <div
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-        style={{
-          flex: 1,
-          background: "var(--paper)",
-          borderRadius: "8px",
-          borderLeft: `3px solid ${style.bar}`,
-          padding: "20px 24px",
-          border: `1px solid ${isNew ? "var(--accent)" : "var(--rule)"}`,
-          transition: "all 0.2s ease-in-out",
-          transform: isHovered ? "translateY(-2px)" : "translateY(0)",
-          boxShadow: isHovered ? "0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -2px rgba(0,0,0,0.04)" : "0 2px 8px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
-          <div>
-            <h3 style={{ fontFamily: "var(--font-lora)", fontSize: "1.1rem", fontWeight: "600",
-              color: "var(--ink)", margin: "0 0 4px 0" }}>{dateUTC}</h3>
-            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: "var(--ink-4)", margin: 0 }}>
-              BLOCK TIMESTAMP: <span style={{ color: "var(--ink-2)", fontWeight: "500" }}>
-                {Number(entry.timestamp).toString()}
-              </span>
-            </p>
-          </div>
-          {isNew && (
-            <span style={{ fontFamily: "var(--font-geist-mono)", fontSize: "10px", fontWeight: "600",
-              letterSpacing: "0.05em", background: "var(--accent-bg)", color: "var(--accent)",
-              padding: "4px 8px", borderRadius: "4px" }}>JUST NOW</span>
-          )}
-        </div>
-
-        <div style={{ display: "flex", gap: "32px", marginBottom: "20px",
-          paddingBottom: "16px", borderBottom: "1px dashed var(--rule)" }}>
-          <div>
-            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "var(--ink-4)",
-              textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
-              Registered Identity
-            </p>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ fontFamily: "var(--font-geist-mono)", fontSize: "13px",
-                color: "var(--ink)", fontWeight: "500" }}>
-                {profile?.name ?? "Unregistered"}
-              </span>
-              <button onClick={() => { navigator.clipboard?.writeText(entry.contributor);
-                toast.success("Address copied"); }}
-                style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px",
-                  color: "var(--ink-4)", background: "var(--paper-2)",
-                  border: "1px solid var(--rule)", padding: "2px 6px",
-                  borderRadius: "4px", cursor: "pointer" }}>
-                {truncate(entry.contributor)}
-              </button>
-            </div>
-          </div>
-          <div>
-            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "var(--ink-4)",
-              textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
-              CRediT Role
-            </p>
-            <span style={{ fontFamily: "var(--font-geist-mono)", fontSize: "12px",
-              fontWeight: "500", padding: "3px 8px", borderRadius: "4px", ...style.badge }}>
-              {entry.role}
-            </span>
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-          <div>
-            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "var(--ink-4)",
-              textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
-              IPFS Artifact CID
-            </p>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <a href={`${GATEWAY}/${entry.cid}`} target="_blank" rel="noreferrer"
-                style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px",
-                  color: "var(--accent)", textDecoration: "none", wordBreak: "break-all" }}>
-                {truncate(entry.cid)} ↗
-              </a>
-              <button onClick={() => handleCopy(entry.cid, 'cid')} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", color: "#9CA3AF", display: "flex", alignItems: "center" }} title="Copy Full CID">
-                {copiedType === 'cid' ? <CheckIcon /> : <CopyIcon />}
-              </button>
-            </div>
-          </div>
-          <div>
-            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "var(--ink-4)",
-              textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
-              Sepolia TX Hash
-            </p>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <a href={`https://sepolia.etherscan.io/tx/${entry.txHash}`} target="_blank" rel="noreferrer"
-                style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px",
-                  color: "var(--ink-3)", textDecoration: "none", wordBreak: "break-all" }}>
-                {truncate(entry.txHash)} ↗
-              </a>
-              <button onClick={() => handleCopy(entry.txHash, 'txHash')} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", color: "#9CA3AF", display: "flex", alignItems: "center" }} title="Copy Full Hash">
-                {copiedType === 'txHash' ? <CheckIcon /> : <CopyIcon />}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+async function fetchLogsInRanges(contract, filter, fromBlock, toBlock) {
+  let allLogs = [];
+  for (let from = fromBlock; from <= toBlock; from += EVENT_QUERY_CHUNK_SIZE) {
+    const to = Math.min(from + EVENT_QUERY_CHUNK_SIZE - 1, toBlock);
+    const logs = await contract.queryFilter(filter, from, to);
+    if (logs.length > 0) allLogs = allLogs.concat(logs);
+  }
+  return allLogs;
 }
 
-function EmptyLedgerState() {
-  return (
-    <div style={{
-      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-      textAlign: "center", padding: "48px 24px", background: "var(--paper-2, #F9FAFB)",
-      borderRadius: "8px", border: "2px dashed #E5E7EB", marginTop: "16px"
-    }}>
-      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: "16px" }}>
-        <path d="M4 22h14a2 2 0 0 0 2-2V7.5L14.5 2H6a2 2 0 0 0-2 2v4"></path>
-        <polyline points="14 2 14 8 20 8"></polyline>
-        <path d="M2 15h10"></path><path d="M2 18h10"></path><path d="M2 21h10"></path>
-      </svg>
-      <h3 style={{ fontFamily: "var(--font-lora)", fontSize: "1.1rem", fontWeight: "600", color: "#374151", margin: "0 0 8px 0" }}>
-        No Priority Claims Found
-      </h3>
-      <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "12px", color: "#6B7280", maxWidth: "400px", lineHeight: "1.6", margin: 0 }}>
-        This project ledger is currently empty. Upload a research artifact and sign a transaction to establish your cryptographic proof-of-priority.
-      </p>
-    </div>
-  );
-}
+export default function ContributionTimeline({
+  contractAddress,
+  contractABI,
+  projectId,
+  readOnlyRpcUrl,
+  refreshKey,
+}) {
+  const [entries, setEntries] = useState([]);
+  const [newIds, setNewIds] = useState(new Set());
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [lastRefreshed, setLastRefreshed] = useState(null);
+  const [isPolling, setIsPolling] = useState(false);
+  const [profileCache, setProfileCache] = useState({});
+  const [disputedEntries, setDisputedEntries] = useState({});
+  const [finalizationStatus, setFinalizationStatus] = useState(null);
+  const [isProjectAdmin, setIsProjectAdmin] = useState(false);
+  const [finalizationDays, setFinalizationDays] = useState(DEFAULT_FINALIZATION_DAYS);
+  const [flaggingDisputeKey, setFlaggingDisputeKey] = useState(null);
 
-export default function ContributionTimeline({ contractAddress, contractABI, projectId, readOnlyRpcUrl, refreshKey }) {
-  const [entries,setEntries]=useState([]);
-  const [newIds,setNewIds]=useState(new Set());
-  const [loading,setLoading]=useState(true);
-  const [error,setError]=useState("");
-  const [lastRefreshed,setLastRefreshed]=useState(null);
-  const [isPolling,setIsPolling]=useState(false);
-  // profileCache is kept in both state (for renders) and a ref (for non-reactive reads
-  // inside callbacks). Reading from the ref avoids adding profileCache to useCallback
-  // dependency arrays, which was the root cause of the infinite re-render loop.
-  const [profileCache,setProfileCache]=useState({});
-  const profileCacheRef=useRef({});
+  const profileCacheRef = useRef({});
+  const contractRef = useRef(null);
+  const providerRef = useRef(null);
+  const pollTimerRef = useRef(null);
+  const prevCountRef = useRef(0);
+  const isMountedRef = useRef(true);
+  const pollInFlightRef = useRef(false);
+  const refreshInFlightRef = useRef(false);
+  const eventQueriesDisabledRef = useRef(false);
 
-  const contractRef=useRef(null),providerRef=useRef(null),pollTimerRef=useRef(null),prevCountRef=useRef(0);
+  const abiString = useMemo(() => JSON.stringify(contractABI), [contractABI]);
+  const supportsEditableFinalizationWindow = useMemo(() => {
+    const initiate = contractABI?.find?.(
+      item => item.type === "function" && item.name === "initiateFinalization"
+    );
+    return (initiate?.inputs?.length ?? 0) > 1;
+  }, [contractABI]);
 
-  const getProvider=useCallback(()=>{
-    if(readOnlyRpcUrl) return new ethers.JsonRpcProvider(readOnlyRpcUrl);
-    if(typeof window!=="undefined"&&window.ethereum) return new ethers.BrowserProvider(window.ethereum);
+  const getProvider = useCallback(() => {
+    if (readOnlyRpcUrl) return new ethers.JsonRpcProvider(readOnlyRpcUrl);
+    if (typeof window !== "undefined" && window.ethereum) {
+      return new ethers.BrowserProvider(window.ethereum);
+    }
     throw new Error("No provider available.");
-  },[readOnlyRpcUrl]);
+  }, [readOnlyRpcUrl]);
 
-  // resolveProfiles reads profileCacheRef (not state) so it never needs
-  // profileCache in its dependency array.
-  const resolveProfiles=useCallback(async(addresses,contract)=>{
-    const currentCache=profileCacheRef.current;
-    const unique=[...new Set(addresses)].filter(a=>!(a in currentCache));
-    if(unique.length===0) return currentCache;
-    const updates={...currentCache};
-    await Promise.all(unique.map(async addr=>{
-      try{ const p=await contract.getProfile(addr); updates[addr]=p.exists?{name:p.name,orcid:p.orcid}:null; }
-      catch{ updates[addr]=null; }
+  const resolveProfiles = useCallback(async (addresses, contract) => {
+    const currentCache = profileCacheRef.current;
+    const unique = [...new Set(addresses)].filter(a => !(a in currentCache));
+    if (unique.length === 0) return currentCache;
+
+    const updates = { ...currentCache };
+    await Promise.all(unique.map(async addr => {
+      try {
+        const p = await contract.getProfile(addr);
+        updates[addr] = p.exists ? { name: p.name, orcid: p.orcid } : null;
+      } catch {
+        updates[addr] = null;
+      }
     }));
     return updates;
-  // No profileCache dependency — we read the ref instead.
-  },[]);
+  }, []);
 
-  const fetchHistory=useCallback(async(contract,provider,projId)=>{
-    const currentBlock=await provider.getBlockNumber();
-    const deployBlock=Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK||10823551);
-    const fromBlock=Math.max(deployBlock,0);
-    const CHUNK=9;
-    let allLogs=[];
-    const filter=contract.filters.ContributionLogged(projId);
-    for(let from=fromBlock;from<=currentBlock;from+=CHUNK){
-      const to=Math.min(from+CHUNK-1,currentBlock);
-      try{ const logs=await contract.queryFilter(filter,from,to); if(logs.length>0) allLogs=allLogs.concat(logs); }catch{}
+  const fetchDisputeEvents = useCallback(async (contract, projId) => {
+    if (eventQueriesDisabledRef.current) return {};
+
+    try {
+      const currentBlock = await contract.provider.getBlockNumber();
+      const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 10823551);
+      const fromBlock = Math.max(deployBlock, 0);
+      const allEvents = {};
+
+      const filter = contract.filters.ContributionDisputed(projId);
+      const logs = await fetchLogsInRanges(contract, filter, fromBlock, currentBlock);
+      logs.forEach(log => {
+        allEvents[log.args.contributionHash] = log.args.reason;
+      });
+
+      return allEvents;
+    } catch {
+      eventQueriesDisabledRef.current = true;
+      return {};
     }
-    return allLogs.map(log=>({contributor:log.args.contributor,cid:log.args.cid,role:log.args.creditRole,timestamp:log.args.timestamp,txHash:log.transactionHash}))
-      .sort((a,b)=>Number(b.timestamp)-Number(a.timestamp));
-  },[]);
+  }, []);
 
-  // poll reads profileCacheRef, not profileCache state, so it is not listed
-  // as a dependency. This prevents the cycle:
-  //   poll updates profileCache → profileCache changes → poll recreated →
-  //   polling useEffect reruns → interval reset → poll fires immediately → …
-  const poll=useCallback(async()=>{
-    if(!contractRef.current||!providerRef.current) return;
-    try{
-      const history=await fetchHistory(contractRef.current,providerRef.current,projectId);
-      const prevCount=prevCountRef.current;
+  const fetchFinalizationStatus = useCallback(async (contract, projId) => {
+    try {
+      return await contract.getFinalizationStatus(projId);
+    } catch {
+      return null;
+    }
+  }, []);
 
-      if(history.length>prevCount&&prevCount>0){
-        const added=history.slice(0,history.length-prevCount);
-        setNewIds(prev=>{const s=new Set(prev);added.forEach(e=>s.add(e.txHash+"-"+e.timestamp));return s;});
-        added.forEach(e=>setTimeout(()=>setNewIds(prev=>{const s=new Set(prev);s.delete(e.txHash+"-"+e.timestamp);return s;}),12000));
-        toast.success("New contribution logged on-chain.",{style:{background:"var(--paper)",border:"1px solid var(--rule)",color:"var(--accent)"}});
+  const checkIsProjectAdmin = useCallback(async (contract, projId) => {
+    try {
+      if (typeof window === "undefined" || !window.ethereum) return false;
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const userAddress = await signer.getAddress();
+      return await contract.isProjectAdmin(projId, userAddress);
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const getWalletContract = useCallback(async () => {
+    if (typeof window === "undefined" || !window.ethereum) {
+      throw new Error("MetaMask not found.");
+    }
+
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    const signer = await provider.getSigner();
+    return new ethers.Contract(contractAddress, JSON.parse(abiString), signer);
+  }, [contractAddress, abiString]);
+
+  const initiateProjectFinalization = useCallback(async () => {
+    const contract = await getWalletContract();
+    if (!supportsEditableFinalizationWindow) {
+      return contract.initiateFinalization(projectId);
+    }
+
+    const durationSeconds = BigInt(Math.round(Number(finalizationDays) * SECONDS_PER_DAY));
+    return contract.initiateFinalization(projectId, durationSeconds);
+  }, [finalizationDays, getWalletContract, projectId, supportsEditableFinalizationWindow]);
+
+  const fetchHistory = useCallback(async (contract, provider, projId) => {
+    let storedEntries = [];
+
+    try {
+      const stored = await contract.getContributions(projId);
+      storedEntries = stored
+        .map(item => ({
+          contributor: item.contributor,
+          cid: item.cid,
+          role: item.creditRole,
+          timestamp: item.timestamp,
+          txHash: "",
+        }))
+        .sort((a, b) => Number(b.timestamp) - Number(a.timestamp));
+    } catch {
+      storedEntries = [];
+    }
+
+    if (eventQueriesDisabledRef.current) return storedEntries;
+
+    try {
+      const currentBlock = await provider.getBlockNumber();
+      const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 10823551);
+      const fromBlock = Math.max(deployBlock, 0);
+      const filter = contract.filters.ContributionLogged(projId);
+      const allLogs = await fetchLogsInRanges(contract, filter, fromBlock, currentBlock);
+
+      if (allLogs.length === 0) return storedEntries;
+
+      const txByKey = new Map(
+        allLogs.map(log => [
+          `${log.args.contributor.toLowerCase()}-${log.args.timestamp.toString()}-${log.args.cid}`,
+          log.transactionHash,
+        ])
+      );
+
+      if (storedEntries.length > 0) {
+        return storedEntries.map(entry => ({
+          ...entry,
+          txHash: txByKey.get(`${entry.contributor.toLowerCase()}-${entry.timestamp.toString()}-${entry.cid}`) ?? "",
+        }));
       }
 
-      prevCountRef.current=history.length;
+      return allLogs
+        .map(log => ({
+          contributor: log.args.contributor,
+          cid: log.args.cid,
+          role: log.args.creditRole,
+          timestamp: log.args.timestamp,
+          txHash: log.transactionHash,
+        }))
+        .sort((a, b) => Number(b.timestamp) - Number(a.timestamp));
+    } catch {
+      eventQueriesDisabledRef.current = true;
+      return storedEntries;
+    }
+  }, []);
+
+  const poll = useCallback(async () => {
+    if (!contractRef.current || !providerRef.current || !isMountedRef.current) return;
+    if (pollInFlightRef.current) return;
+
+    pollInFlightRef.current = true;
+    try {
+      const history = await fetchHistory(contractRef.current, providerRef.current, projectId);
+      const prevCount = prevCountRef.current;
+
+      if (history.length > prevCount && prevCount > 0) {
+        const added = history.slice(0, history.length - prevCount);
+        setNewIds(prev => {
+          const s = new Set(prev);
+          added.forEach(e => s.add(e.txHash + "-" + e.timestamp));
+          return s;
+        });
+        added.forEach(e => {
+          setTimeout(() => {
+            setNewIds(prev => {
+              const s = new Set(prev);
+              s.delete(e.txHash + "-" + e.timestamp);
+              return s;
+            });
+          }, 12000);
+        });
+        toast.success("New contribution logged on-chain.", {
+          style: {
+            background: "var(--paper)",
+            border: "1px solid var(--rule)",
+            color: "var(--accent)",
+          },
+        });
+      }
+
+      prevCountRef.current = history.length;
       setEntries(history);
       setLastRefreshed(new Date());
 
-      const newAddrs=history.map(e=>e.contributor);
-      const uncached=[...new Set(newAddrs)].filter(a=>!(a in profileCacheRef.current));
-      if(uncached.length>0){
-        resolveProfiles(newAddrs,contractRef.current).then(updated=>{
-          profileCacheRef.current=updated;
-          setProfileCache(updated);
-        }).catch(()=>{});
+      const contributors = history.map(e => e.contributor);
+      const uncached = [...new Set(contributors)].filter(a => !(a in profileCacheRef.current));
+      if (uncached.length > 0) {
+        resolveProfiles(contributors, contractRef.current)
+          .then(updated => {
+            if (isMountedRef.current) {
+              profileCacheRef.current = updated;
+              setProfileCache(updated);
+            }
+          })
+          .catch(() => { });
       }
-    }catch{}
-  // fetchHistory and resolveProfiles are stable (no changing deps).
-  // projectId is the only value here that can legitimately change.
-  },[projectId,fetchHistory,resolveProfiles]);
 
+      const disputes = await fetchDisputeEvents(contractRef.current, projectId);
+      if (isMountedRef.current) setDisputedEntries(disputes);
 
-  // 1. Turn the array into a primitive string so React can compare it safely
-  const abiString = JSON.stringify(contractABI);
-  
-  // ── Initial load — runs once per [contractAddress, contractABI, projectId] change ──
-  useEffect(()=>{
-    setEntries([]);setLoading(true);setError("");setIsPolling(false);
-    profileCacheRef.current={};
+      const finStatus = await fetchFinalizationStatus(contractRef.current, projectId);
+      if (isMountedRef.current) setFinalizationStatus(finStatus);
+
+      const adminStatus = await checkIsProjectAdmin(contractRef.current, projectId);
+      if (isMountedRef.current) setIsProjectAdmin(adminStatus);
+    } catch { }
+    finally {
+      pollInFlightRef.current = false;
+    }
+  }, [
+    checkIsProjectAdmin,
+    fetchDisputeEvents,
+    fetchFinalizationStatus,
+    fetchHistory,
+    projectId,
+    resolveProfiles,
+  ]);
+
+  const refreshData = useCallback(async (fallbackMessage) => {
+    if (!contractRef.current || !providerRef.current) return;
+    if (refreshInFlightRef.current) return;
+
+    refreshInFlightRef.current = true;
+    setLoading(true);
+    try {
+      const h = await fetchHistory(contractRef.current, providerRef.current, projectId);
+      if (!h) return;
+
+      prevCountRef.current = h.length;
+      setEntries(h);
+      setLastRefreshed(new Date());
+      setLoading(false);
+
+      const contributors = h.map(e => e.contributor);
+      const profileResult = await resolveProfiles(contributors, contractRef.current);
+      if (isMountedRef.current) {
+        profileCacheRef.current = profileResult;
+        setProfileCache(profileResult);
+      }
+
+      const disputes = await fetchDisputeEvents(contractRef.current, projectId);
+      if (isMountedRef.current) setDisputedEntries(disputes);
+
+      const finStatus = await fetchFinalizationStatus(contractRef.current, projectId);
+      if (isMountedRef.current) setFinalizationStatus(finStatus);
+
+      const adminStatus = await checkIsProjectAdmin(contractRef.current, projectId);
+      if (isMountedRef.current) setIsProjectAdmin(adminStatus);
+    } catch (err) {
+      setError(getFriendlyError(err, fallbackMessage));
+      setLoading(false);
+    } finally {
+      refreshInFlightRef.current = false;
+    }
+  }, [
+    checkIsProjectAdmin,
+    fetchDisputeEvents,
+    fetchFinalizationStatus,
+    fetchHistory,
+    projectId,
+    resolveProfiles,
+  ]);
+
+  useEffect(() => {
+    setEntries([]);
+    setLoading(true);
+    setError("");
+    setIsPolling(false);
+    profileCacheRef.current = {};
     setProfileCache({});
-    prevCountRef.current=0;
+    prevCountRef.current = 0;
+    pollInFlightRef.current = false;
+    refreshInFlightRef.current = false;
+    eventQueriesDisabledRef.current = false;
+    isMountedRef.current = true;
     clearInterval(pollTimerRef.current);
 
-    const init=async()=>{
-      try{
-        const provider=getProvider();
-        providerRef.current=provider;
-        
-        // 3. Parse it back into an array exactly right here for ethers.js
-        const contract=new ethers.Contract(contractAddress,JSON.parse(abiString),provider);
-        contractRef.current=contract;
+    const init = async () => {
+      try {
+        const provider = getProvider();
+        providerRef.current = provider;
 
-        const history=await fetchHistory(contract,provider,projectId);
-        if(!isMounted) return;
+        const contract = new ethers.Contract(contractAddress, JSON.parse(abiString), provider);
+        contractRef.current = contract;
 
-        prevCountRef.current=history.length;
+        const history = await fetchHistory(contract, provider, projectId);
+        if (!isMountedRef.current) return;
+
+        prevCountRef.current = history.length;
         setEntries(history);
         setLastRefreshed(new Date());
         setLoading(false);
         setIsPolling(true);
 
-        const contributors=history.map(e=>e.contributor);
-        resolveProfiles(contributors,contract)
-          .then(cache=>{
-            if(!isMounted) return;
-            profileCacheRef.current=cache;
-            setProfileCache(cache);
-          })
-          .catch(()=>{});
+        const contributors = history.map(e => e.contributor);
+        const profileResult = await resolveProfiles(contributors, contract);
+        if (isMountedRef.current) {
+          profileCacheRef.current = profileResult;
+          setProfileCache(profileResult);
+        }
+
+        const disputes = await fetchDisputeEvents(contract, projectId);
+        if (isMountedRef.current) setDisputedEntries(disputes);
+
+        const finStatus = await fetchFinalizationStatus(contract, projectId);
+        if (isMountedRef.current) setFinalizationStatus(finStatus);
+
+        const adminStatus = await checkIsProjectAdmin(contract, projectId);
+        if (isMountedRef.current) setIsProjectAdmin(adminStatus);
       } catch (err) {
-        if(isMounted){
-          setError(getFriendlyError(err,"Failed to load contributions."));
+        if (isMountedRef.current) {
+          setError(getFriendlyError(err, "Failed to load contributions."));
           setLoading(false);
         }
       }
     };
 
     init();
-    return()=>{isMounted=false;clearInterval(pollTimerRef.current);};
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[contractAddress,abiString,projectId]);
-  // NOTE: getProvider, fetchHistory, resolveProfiles are intentionally omitted —
-  // they are stable callbacks whose identity never changes after mount.
 
-  // ── Polling interval — only restarted when isPolling or poll changes ──
-  useEffect(()=>{
-    if(!isPolling) return;
-    pollTimerRef.current=setInterval(poll,POLL_INTERVAL);
-    return()=>clearInterval(pollTimerRef.current);
-  },[isPolling,poll]);
+    return () => {
+      isMountedRef.current = false;
+      clearInterval(pollTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contractAddress, abiString, projectId]);
 
-  // ── External refresh trigger (e.g. after a new submission) ──
-  useEffect(()=>{
-    if(!refreshKey||refreshKey===0) return;
-    if(!contractRef.current||!providerRef.current) return;
-    const t=setTimeout(async()=>{
+  useEffect(() => {
+    if (!isPolling) return;
+
+    pollTimerRef.current = setInterval(poll, POLL_INTERVAL);
+    return () => clearInterval(pollTimerRef.current);
+  }, [isPolling, poll]);
+
+  useEffect(() => {
+    if (!refreshKey || refreshKey === 0) return;
+    if (!contractRef.current || !providerRef.current) return;
+
+    const t = setTimeout(() => {
+      refreshData("Refresh failed.");
+    }, 2500);
+
+    return () => clearTimeout(t);
+  }, [refreshKey, refreshData]);
+
+  const handleRefresh = useCallback(() => {
+    refreshData("Refresh failed.");
+  }, [refreshData]);
+
+  const handleHaltFinalization = useCallback(async () => {
+    try {
       setLoading(true);
-      try{
-        const h=await fetchHistory(contractRef.current,providerRef.current,projectId);
-        if(!h) return;
-        prevCountRef.current=h.length;
-        setEntries(h);
-        setLastRefreshed(new Date());
-        setLoading(false);
-
-        const contributors=h.map(e=>e.contributor);
-        // Read latest cache from ref — no state dep needed.
-        resolveProfiles(contributors,contractRef.current)
-          .then(cache=>{
-            profileCacheRef.current=cache;
-            setProfileCache(cache);
-          })
-          .catch(()=>{});
-      } catch (err) {
-        setError(getFriendlyError(err,"Refresh failed."));
-        setLoading(false);
-      }
-    },2500);
-    return()=>clearTimeout(t);
-  // fetchHistory and resolveProfiles are stable; projectId is the live value.
-  },[refreshKey,projectId,fetchHistory,resolveProfiles]);
-
-  const handleRefresh=async()=>{
-    if(!contractRef.current||!providerRef.current) return;
-    setLoading(true);
-    try{
-      const h=await fetchHistory(contractRef.current,providerRef.current,projectId);
-      if(!h) return;
-      prevCountRef.current=h.length;
-      setEntries(h);
-      setLastRefreshed(new Date());
-      setLoading(false);
-
-      const contributors=h.map(e=>e.contributor);
-      resolveProfiles(contributors,contractRef.current)
-        .then(cache=>{
-          profileCacheRef.current=cache;
-          setProfileCache(cache);
-        })
-        .catch(()=>{});
+      const contract = await getWalletContract();
+      const tx = await contract.haltFinalization(projectId);
+      await tx.wait();
+      toast.success("Finalization halted!");
+      setTimeout(() => poll(), 1000);
     } catch (err) {
-      setError(getFriendlyError(err,"Refresh failed."));
+      toast.error(getFriendlyError(err, "Failed to halt finalization."));
+    } finally {
       setLoading(false);
     }
-  };
+  }, [getWalletContract, poll, projectId]);
 
-  return(
-    <>
-      <style>{`@keyframes slideIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}} @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
-      <div style={{border:"1px solid var(--rule)",borderRadius:"8px",overflow:"hidden",background:"var(--paper)"}}>
-        <div style={{height:"2px",background:"var(--indigo)"}}/>
-        <div style={{padding:"22px"}}>
-          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:"12px",paddingBottom:"14px",borderBottom:"1px solid var(--rule-light)",marginBottom:"16px"}}>
-            <div>
-              <p style={{fontFamily:"var(--font-geist-mono)",fontSize:"10px",color:"var(--indigo)",textTransform:"uppercase",letterSpacing:"0.18em",marginBottom:"4px"}}>Immutable Audit Trail</p>
-              <h2 style={{fontFamily:"var(--font-lora)",fontSize:"1.15rem",fontWeight:600,color:"var(--ink)",marginBottom:"4px"}}>Contribution Timeline</h2>
-              <p style={{fontFamily:"var(--font-geist-mono)",fontSize:"10px",color:"var(--ink-4)"}}>Project: <span style={{color:"var(--ink-2)",fontWeight:600}}>{projectId}</span></p>
-            </div>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:"5px",flexShrink:0}}>
-              <div style={{display:"flex",alignItems:"center",gap:"5px",fontFamily:"var(--font-geist-mono)",fontSize:"10px",color:isPolling?"var(--accent)":"var(--ink-4)"}}>
-                <span style={{display:"inline-block",width:"6px",height:"6px",borderRadius:"50%",background:isPolling?"var(--accent)":"var(--rule)",animation:isPolling?"pulse 2s infinite":"none"}}/>
-                {isPolling?"Polling every 10s":loading?"Connecting...":"Idle"}
-              </div>
-              <button onClick={handleRefresh} disabled={loading} style={{display:"flex",alignItems:"center",gap:"4px",fontFamily:"var(--font-geist-mono)",fontSize:"10px",color:"var(--ink-4)",background:"none",border:"none",cursor:loading?"not-allowed":"pointer",opacity:loading?0.4:1}}>
-                <svg style={{animation:loading?"spin 1s linear infinite":"none",width:"11px",height:"11px"}} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582M20 20v-5h-.581M5.635 19A9 9 0 104.582 9"/></svg>
-                Refresh
-              </button>
-              {lastRefreshed&&<p style={{fontFamily:"var(--font-geist-mono)",fontSize:"9px",color:"var(--ink-4)"}}>{lastRefreshed.toLocaleTimeString()}</p>}
-            </div>
-          </div>
-          {entries.length>0&&(
-            <div style={{display:"flex",alignItems:"center",gap:"12px",marginBottom:"16px"}}>
-              <span style={{background:"var(--indigo-bg)",color:"var(--indigo)",border:"1px solid #C5CAE9",fontFamily:"var(--font-geist-mono)",fontSize:"10px",fontWeight:700,padding:"2px 10px",borderRadius:"4px"}}>{entries.length} {entries.length===1?"record":"records"}</span>
-              <div style={{height:"1px",flex:1,background:"var(--rule-light)"}}/>
+  const handleInitiateFinalization = useCallback(async () => {
+    try {
+      setLoading(true);
+      const tx = await initiateProjectFinalization();
+      await tx.wait();
+      toast.success(
+        supportsEditableFinalizationWindow
+          ? `Finalization initiated! ${finalizationDays}-day countdown started.`
+          : "Finalization initiated! Contract countdown started."
+      );
+      setTimeout(() => poll(), 1000);
+    } catch (err) {
+      toast.error(getFriendlyError(err, "Failed to initiate finalization."));
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    finalizationDays,
+    initiateProjectFinalization,
+    poll,
+    supportsEditableFinalizationWindow,
+  ]);
+
+  const getContributionHash = useCallback((contributor, timestamp) => {
+    return buildContributionHash(projectId, contributor, timestamp);
+  }, [projectId]);
+
+  const handleFlagDispute = useCallback(async (entry, reason) => {
+    const cleanReason = reason.trim();
+    if (!cleanReason) {
+      toast.error("Please enter a dispute reason.");
+      return false;
+    }
+
+    const key = entry.txHash + "-" + entry.timestamp;
+    setFlaggingDisputeKey(key);
+    try {
+      const contract = await getWalletContract();
+      const tx = await contract.flagContributionAsDisputed(
+        projectId,
+        entry.contributor,
+        entry.timestamp,
+        cleanReason
+      );
+      await tx.wait();
+
+      const hash = getContributionHash(entry.contributor, entry.timestamp);
+      setDisputedEntries(prev => ({ ...prev, [hash]: cleanReason }));
+      toast.success("Contribution flagged as disputed.");
+      setTimeout(() => poll(), 1000);
+      return true;
+    } catch (err) {
+      toast.error(getFriendlyError(err, "Failed to flag contribution."));
+      return false;
+    } finally {
+      setFlaggingDisputeKey(null);
+    }
+  }, [getContributionHash, getWalletContract, poll, projectId]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px", minWidth: 0 }}>
+      <style>{`
+        @keyframes slideIn { from { opacity: 0; transform: translateY(-10px) } to { opacity: 1; transform: translateY(0) } }
+        @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
+        @keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+      `}</style>
+
+      <FinalizationBanner
+        finalizationStatus={finalizationStatus}
+        loading={loading}
+        onHalt={handleHaltFinalization}
+      />
+
+      <div style={{
+        border: "1px solid var(--rule)",
+        borderRadius: "8px",
+        overflow: "hidden",
+        background: finalizationStatus?.isFinalized ? "#F0FDF4" : "var(--paper)",
+      }}>
+        <div style={{
+          height: "2px",
+          background: finalizationStatus?.isFinalized ? "#15803D" : "var(--indigo)",
+        }} />
+        <div style={{ padding: "22px" }}>
+          <TimelineHeader
+            projectId={projectId}
+            loading={loading}
+            isPolling={isPolling}
+            isProjectAdmin={isProjectAdmin}
+            finalizationStatus={finalizationStatus}
+            finalizationDays={finalizationDays}
+            supportsEditableFinalizationWindow={supportsEditableFinalizationWindow}
+            lastRefreshed={lastRefreshed}
+            onRefresh={handleRefresh}
+            onFinalizationDaysChange={setFinalizationDays}
+            onInitiateFinalization={handleInitiateFinalization}
+          />
+
+          {entries.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
+              <span style={{
+                background: finalizationStatus?.isFinalized ? "#DCFCE7" : "var(--indigo-bg)",
+                color: finalizationStatus?.isFinalized ? "#15803D" : "var(--indigo)",
+                border: finalizationStatus?.isFinalized ? "1px solid #86EFAC" : "1px solid #C5CAE9",
+                fontFamily: "var(--font-geist-mono)",
+                fontSize: "10px",
+                fontWeight: 700,
+                padding: "2px 10px",
+                borderRadius: "4px",
+              }}>
+                {entries.length} {entries.length === 1 ? "record" : "records"}
+              </span>
+              <div style={{ height: "1px", flex: 1, background: "var(--rule-light)" }} />
             </div>
           )}
-          {error&&<div style={{background:"var(--danger-bg)",border:"1px solid #F5C6CB",color:"var(--danger)",borderRadius:"6px",padding:"9px 12px",fontSize:"12px",marginBottom:"12px",display:"flex",gap:"8px"}}><span>✕</span><span style={{lineHeight:1.5}}>{error}</span></div>}
-          {loading&&entries.length===0&&(
-            <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
-              {[...Array(3)].map((_,i)=>(
-                <div key={i} style={{display:"flex",gap:"12px"}}>
-                  <div style={{width:"26px",height:"26px",borderRadius:"50%",background:"var(--rule-light)",flexShrink:0,animation:"pulse 1.5s infinite"}}/>
-                  <div style={{flex:1,height:"120px",borderRadius:"8px",background:"var(--paper-2)",border:"1px solid var(--rule-light)",animation:"pulse 1.5s infinite"}}/>
-                </div>
-              ))}
+
+          {error && (
+            <div style={{
+              background: "var(--danger-bg)",
+              border: "1px solid #F5C6CB",
+              color: "var(--danger)",
+              borderRadius: "6px",
+              padding: "9px 12px",
+              fontSize: "12px",
+              marginBottom: "12px",
+              display: "flex",
+              gap: "8px",
+            }}>
+              <span>x</span>
+              <span style={{ lineHeight: 1.5 }}>{error}</span>
             </div>
           )}
-          {!loading&&!error&&entries.length===0&&<EmptyLedgerState />}
-          {entries.length>0&&(
+
+          {loading && entries.length === 0 && <TimelineSkeleton />}
+          {!loading && !error && entries.length === 0 && <EmptyLedgerState />}
+
+          {entries.length > 0 && (
             <div>
-              {entries.map((entry,idx)=>{
-                const key=entry.txHash+"-"+entry.timestamp;
-                return <TimelineEntry key={key} entry={entry} index={idx} isNew={newIds.has(key)} profile={profileCache[entry.contributor]}/>;
+              {entries.map(entry => {
+                const key = (entry.txHash || entry.cid) + "-" + entry.timestamp;
+                const hash = getContributionHash(entry.contributor, entry.timestamp);
+                const isDisputed = !!disputedEntries[hash];
+                const disputeReason = disputedEntries[hash] || null;
+
+                return (
+                  <TimelineEntry
+                    key={key}
+                    entry={entry}
+                    isNew={newIds.has(key)}
+                    profile={profileCache[entry.contributor]}
+                    isDisputed={isDisputed}
+                    disputeReason={disputeReason}
+                    isProjectFinalized={finalizationStatus?.isFinalized}
+                    isProjectAdmin={isProjectAdmin}
+                    isFlagging={flaggingDisputeKey === key}
+                    onFlagDispute={handleFlagDispute}
+                  />
+                );
               })}
-              <p style={{textAlign:"center",fontFamily:"var(--font-geist-mono)",fontSize:"10px",color:"var(--ink-4)",borderTop:"1px solid var(--rule-light)",paddingTop:"12px"}}>All records are append-only and immutable. No scoring applied.</p>
+              <p style={{
+                textAlign: "center",
+                fontFamily: "var(--font-geist-mono)",
+                fontSize: "10px",
+                color: finalizationStatus?.isFinalized ? "#15803D" : "var(--ink-4)",
+                borderTop: "1px solid var(--rule-light)",
+                paddingTop: "12px",
+              }}>
+                {finalizationStatus?.isFinalized
+                  ? "All records are permanently sealed and immutable."
+                  : "All records are append-only and immutable. No scoring applied."
+                }
+              </p>
             </div>
           )}
         </div>
       </div>
-    </>
+    </div>
   );
 }
