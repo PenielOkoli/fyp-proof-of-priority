@@ -30,11 +30,29 @@ export function WalletProvider({ children, contractAddress, contractABI }) {
     try {
       const provider = new ethers.JsonRpcProvider(process.env.NEXT_PUBLIC_RPC_URL);
       const contract = new ethers.Contract(contractAddress, contractABI, provider);
-      const exists   = await contract.hasProfile(addr);
+      
+      let exists;
+      try {
+        exists = await contract.hasProfile(addr);
+      } catch (err) {
+        if (err?.code === "CALL_EXCEPTION" || err?.message?.includes("missing revert data")) {
+          console.warn("hasProfile not available - contract may be older version");
+          setNeedsProfile(false);
+          return;
+        }
+        throw err;
+      }
+      
       if (exists) {
-        const p = await contract.getProfile(addr);
-        setProfile({ name: p.name, orcid: p.orcid });
-        setNeedsProfile(false);
+        try {
+          const p = await contract.getProfile(addr);
+          setProfile({ name: p.name, orcid: p.orcid });
+          setNeedsProfile(false);
+        } catch (err) {
+          console.error("Failed to fetch profile data:", err);
+          setProfile(null);
+          setNeedsProfile(false);
+        }
       } else {
         setProfile(null);
         setNeedsProfile(true);

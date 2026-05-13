@@ -33,8 +33,20 @@ export default function ProjectSelector({ contractAddress, contractABI, onProjec
     try {
       const provider = new ethers.JsonRpcProvider(process.env.NEXT_PUBLIC_RPC_URL);
       const contract = new ethers.Contract(contractAddress, contractABI, provider);
-      const list     = await contract.getUserProjects(address);
-      const arr      = [...list];
+      
+      let list;
+      try {
+        list = await contract.getUserProjects(address);
+      } catch (err) {
+        if (err?.code === "CALL_EXCEPTION" || err?.message?.includes("missing revert data")) {
+          console.warn("getUserProjects not available - contract may be older version");
+          setProjects([]);
+          return;
+        }
+        throw err;
+      }
+      
+      const arr = [...list];
       setProjects(arr);
       // Auto-select if only one project and nothing selected yet
       if (arr.length === 1 && !currentProjectId) {
@@ -42,6 +54,7 @@ export default function ProjectSelector({ contractAddress, contractABI, onProjec
       }
     } catch (err) {
       console.error("Failed to fetch projects:", err);
+      setProjects([]); // Clear projects on error
     } finally {
       setLoading(false);
     }

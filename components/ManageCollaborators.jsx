@@ -69,31 +69,46 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
       // 2. For each address, check if still authorized and fetch profile
       const enriched = await Promise.all(
         [...addresses].map(async (addr) => {
+          let isAuth = false;
+          let profile = null;
+          
+          // Check authorization with dedicated try-catch
           try {
-            const [isAuth, profile] = await Promise.all([
-              contract.authorizedCollaborators(projectId, addr),
-              contract.getProfile(addr).catch(() => null),
-            ]);
-            return {
-              address:  addr,
-              isAuth,
-              name:     profile?.exists ? profile.name  : null,
-              orcid:    profile?.exists ? profile.orcid : null,
-              isAdmin:  adminAddr
-                ? addr.toLowerCase() === adminAddr.toLowerCase()
-                : false,
-            };
+            isAuth = await contract.authorizedCollaborators(projectId, addr);
           } catch (err) {
-            console.error(`Failed to enrich address ${addr}:`, err);
-            // Return address without profile data if enrichment fails
-            return {
-              address:  addr,
-              isAuth:   false,
-              name:     null,
-              orcid:    null,
-              isAdmin:  false,
-            };
+            console.error(`Failed to check authorization for ${addr}:`, err);
+            isAuth = false;
           }
+          
+          // Try to fetch profile with extended timeout and error recovery
+          if (isAuth) {
+            try {
+              // Use a shorter timeout for profile fetches to avoid hanging
+              const profilePromise = contract.getProfile(addr);
+              const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error("Profile fetch timeout")), 5000)
+              );
+              profile = await Promise.race([profilePromise, timeoutPromise]).catch(() => null);
+            } catch (err) {
+              // Check if it's a "function doesn't exist" error vs. other issues
+              if (err?.code === "CALL_EXCEPTION" || err?.message?.includes("missing revert data")) {
+                console.warn(`Profile lookup not available for ${addr} (contract may not have getProfile function)`);
+              } else {
+                console.error(`Failed to fetch profile for ${addr}:`, err);
+              }
+              profile = null;
+            }
+          }
+          
+          return {
+            address:  addr,
+            isAuth,
+            name:     profile?.exists ? profile.name  : null,
+            orcid:    profile?.exists ? profile.orcid : null,
+            isAdmin:  adminAddr
+              ? addr.toLowerCase() === adminAddr.toLowerCase()
+              : false,
+          };
         })
       );
 
@@ -337,9 +352,14 @@ function RosterList({ roster, loading, currentAddress, error }) {
   if (error) return (
     <div style={{ background:"var(--danger-bg)", border:"1px solid #F5C6CB", borderRadius:"6px", padding:"12px", display:"flex", gap:"8px", alignItems:"flex-start" }}>
       <span style={{ color:"var(--danger)", fontWeight:700, flexShrink:0 }}>⚠</span>
-      <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:"var(--danger)", lineHeight:1.5, margin:0 }}>
-        {error}
-      </p>
+      <div style={{ flex:1 }}>
+        <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:"var(--danger)", lineHeight:1.5, margin:"0 0 6px 0" }}>
+          {error}
+        </p>
+        <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--danger)", opacity:0.8, margin:0, lineHeight:1.4 }}>
+          💡 <strong>Try:</strong> Verify the contract address is correct and has been deployed with the latest AcademicLedger v4 code.
+        </p>
+      </div>
     </div>
   );
 
