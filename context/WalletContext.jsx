@@ -1,7 +1,7 @@
 "use client";
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
-import { getFriendlyError } from "@/utils/errorFormatter";
+import { getReadProvider } from "@/utils/providers";
 
 const SEPOLIA_CHAIN_ID = "0xaa36a7";
 const WalletContext    = createContext(null);
@@ -28,7 +28,7 @@ export function WalletProvider({ children, contractAddress, contractABI }) {
     if (!contractAddress || !contractABI || !addr) return;
     setCheckingProfile(true);
     try {
-      const provider = new ethers.JsonRpcProvider(process.env.NEXT_PUBLIC_RPC_URL);
+      const provider = getReadProvider();
       const contract = new ethers.Contract(contractAddress, contractABI, provider);
       
       let exists;
@@ -59,6 +59,7 @@ export function WalletProvider({ children, contractAddress, contractABI }) {
       }
     } catch (err) {
       console.error("Profile fetch failed:", err);
+      setProfile(null);
       setNeedsProfile(false);
     } finally {
       setCheckingProfile(false);

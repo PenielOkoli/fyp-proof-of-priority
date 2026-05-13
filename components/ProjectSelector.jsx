@@ -11,6 +11,7 @@ import { ethers } from "ethers";
 import toast from "react-hot-toast";
 import { useWallet } from "@/context/WalletContext";
 import { getFriendlyError } from "@/utils/errorFormatter";
+import { getReadProvider } from "@/utils/providers";
 
 const VALID_RE = /^[a-zA-Z0-9_\-\.]{3,64}$/;
 
@@ -31,7 +32,7 @@ export default function ProjectSelector({ contractAddress, contractABI, onProjec
     if (!contractAddress || !contractABI || !address) return;
     setLoading(true);
     try {
-      const provider = new ethers.JsonRpcProvider(process.env.NEXT_PUBLIC_RPC_URL);
+      const provider = getReadProvider();
       const contract = new ethers.Contract(contractAddress, contractABI, provider);
       
       let list;
@@ -89,7 +90,7 @@ export default function ProjectSelector({ contractAddress, contractABI, onProjec
       toast.success(`Project "${newId.trim()}" created.`, { id: toastId });
 
       // Refresh list and auto-select the new project
-      const readProvider = new ethers.JsonRpcProvider(process.env.NEXT_PUBLIC_RPC_URL);
+      const readProvider = getReadProvider();
       const readContract = new ethers.Contract(contractAddress, contractABI, readProvider);
       const list         = await readContract.getUserProjects(address);
       setProjects([...list]);
