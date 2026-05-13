@@ -66,54 +66,74 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
         return;
       }
 
-      // 2. For each address, check if still authorized and fetch profile
-      const enriched = await Promise.all(
-        [...addresses].map(async (addr) => {
-          let isAuth = false;
-          let profile = null;
-          
-          // Check authorization with dedicated try-catch
+      // 2. For each address, check if still authorized and fetch profile.
+      // Sequential iteration avoids overwhelming the RPC provider.
+      const enriched = [];
+      let authStatusUnavailable = false;
+      let profileLookupUnavailable = false;
+
+      for (let i = 0; i < addresses.length; i += 1) {
+        const addr = addresses[i];
+        let isAuth = false;
+        let profile = null;
+
+        if (!authStatusUnavailable) {
           try {
             isAuth = await contract.authorizedCollaborators(projectId, addr);
           } catch (err) {
-            console.error(`Failed to check authorization for ${addr}:`, err);
+            if (err?.code === "CALL_EXCEPTION" || err?.message?.includes("missing revert data")) {
+              console.warn(`authorizedCollaborators not available on this contract; skipping auth checks.`);
+              authStatusUnavailable = true;
+            } else if (err?.code === 429 || err?.message?.includes("compute units")) {
+              console.warn(`Rate limited while checking authorization for ${addr}. Retrying later.`);
+            } else {
+              console.error(`Failed to check authorization for ${addr}:`, err);
+            }
             isAuth = false;
           }
-          
-          // Try to fetch profile with extended timeout and error recovery
-          if (isAuth) {
+        }
+
+        if (!authStatusUnavailable && isAuth) {
+          if (!profileLookupUnavailable) {
             try {
-              // Use a shorter timeout for profile fetches to avoid hanging
               const profilePromise = contract.getProfile(addr);
               const timeoutPromise = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error("Profile fetch timeout")), 5000)
               );
-              profile = await Promise.race([profilePromise, timeoutPromise]).catch(() => null);
+              profile = await Promise.race([profilePromise, timeoutPromise]);
             } catch (err) {
-              // Check if it's a "function doesn't exist" error vs. other issues
               if (err?.code === "CALL_EXCEPTION" || err?.message?.includes("missing revert data")) {
-                console.warn(`Profile lookup not available for ${addr} (contract may not have getProfile function)`);
+                console.warn(`getProfile not available on this contract; skipping profile lookups.`);
+                profileLookupUnavailable = true;
+              } else if (err?.code === 429 || err?.message?.includes("compute units")) {
+                console.warn(`Rate limited while fetching profile for ${addr}.`);
               } else {
                 console.error(`Failed to fetch profile for ${addr}:`, err);
               }
               profile = null;
             }
           }
-          
-          return {
-            address:  addr,
-            isAuth,
-            name:     profile?.exists ? profile.name  : null,
-            orcid:    profile?.exists ? profile.orcid : null,
-            isAdmin:  adminAddr
-              ? addr.toLowerCase() === adminAddr.toLowerCase()
-              : false,
-          };
-        })
-      );
+        }
 
-      // 3. Only show currently authorized addresses
-      setRoster(enriched.filter(e => e.isAuth));
+        enriched.push({
+          address: addr,
+          isAuth,
+          name: profile?.exists ? profile.name : null,
+          orcid: profile?.exists ? profile.orcid : null,
+          isAdmin: adminAddr ? addr.toLowerCase() === adminAddr.toLowerCase() : false,
+        });
+
+        if (i + 1 < addresses.length) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      }
+
+      if (authStatusUnavailable) {
+        setRosterError("Could not verify current authorization status on this contract version. Showing roster addresses without authorization filtering.");
+        setRoster(enriched.map((entry) => ({ ...entry, isAuth: true })));
+      } else {
+        setRoster(enriched.filter((e) => e.isAuth));
+      }
     } catch (err) {
       const errMsg = getFriendlyError(err, "Failed to load collaborator roster.");
       setRosterError(errMsg);
