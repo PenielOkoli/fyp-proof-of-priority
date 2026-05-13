@@ -31,6 +31,7 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
   // Roster state
   const [roster,         setRoster]         = useState([]);
   const [rosterLoading,  setRosterLoading]  = useState(false);
+  const [rosterError,    setRosterError]    = useState("");
 
   // Transfer ownership state
   const [transferAddr,   setTransferAddr]   = useState("");
@@ -43,36 +44,66 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
   const fetchRoster = useCallback(async (adminAddr) => {
     if (!contractAddress || !contractABI || !projectId) return;
     setRosterLoading(true);
+    setRosterError("");
     try {
       const provider = new ethers.JsonRpcProvider(process.env.NEXT_PUBLIC_RPC_URL);
       const contract = new ethers.Contract(contractAddress, contractABI, provider);
 
       // 1. Get all addresses ever pushed to the roster
-      const addresses = await contract.getProjectCollaborators(projectId);
+      let addresses;
+      try {
+        addresses = await contract.getProjectCollaborators(projectId);
+      } catch (err) {
+        const errMsg = getFriendlyError(err, "Could not fetch collaborator roster from contract.");
+        setRosterError(errMsg);
+        console.error("getProjectCollaborators failed:", err);
+        setRoster([]);
+        return;
+      }
+
+      if (!addresses || addresses.length === 0) {
+        setRoster([]);
+        return;
+      }
 
       // 2. For each address, check if still authorized and fetch profile
       const enriched = await Promise.all(
         [...addresses].map(async (addr) => {
-          const [isAuth, profile] = await Promise.all([
-            contract.authorizedCollaborators(projectId, addr),
-            contract.getProfile(addr).catch(() => null),
-          ]);
-          return {
-            address:  addr,
-            isAuth,
-            name:     profile?.exists ? profile.name  : null,
-            orcid:    profile?.exists ? profile.orcid : null,
-            isAdmin:  adminAddr
-              ? addr.toLowerCase() === adminAddr.toLowerCase()
-              : false,
-          };
+          try {
+            const [isAuth, profile] = await Promise.all([
+              contract.authorizedCollaborators(projectId, addr),
+              contract.getProfile(addr).catch(() => null),
+            ]);
+            return {
+              address:  addr,
+              isAuth,
+              name:     profile?.exists ? profile.name  : null,
+              orcid:    profile?.exists ? profile.orcid : null,
+              isAdmin:  adminAddr
+                ? addr.toLowerCase() === adminAddr.toLowerCase()
+                : false,
+            };
+          } catch (err) {
+            console.error(`Failed to enrich address ${addr}:`, err);
+            // Return address without profile data if enrichment fails
+            return {
+              address:  addr,
+              isAuth:   false,
+              name:     null,
+              orcid:    null,
+              isAdmin:  false,
+            };
+          }
         })
       );
 
       // 3. Only show currently authorized addresses
       setRoster(enriched.filter(e => e.isAuth));
     } catch (err) {
+      const errMsg = getFriendlyError(err, "Failed to load collaborator roster.");
+      setRosterError(errMsg);
       console.error("Roster fetch failed:", err);
+      setRoster([]);
     } finally {
       setRosterLoading(false);
     }
@@ -184,7 +215,7 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
           <h2 style={{ fontFamily:"var(--font-lora)", fontSize:"1.1rem", fontWeight:600, color:"var(--ink)" }}>Authorized Collaborators</h2>
           {transferred && <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", marginTop:"4px" }}>Ownership transferred — admin panel hidden.</p>}
         </div>
-        <RosterList roster={roster} loading={rosterLoading} currentAddress={address} />
+        <RosterList roster={roster} loading={rosterLoading} currentAddress={address} error={rosterError} />
       </div>
       <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
     </div>
@@ -249,7 +280,7 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
                 Refresh
               </button>
             </div>
-            <RosterList roster={roster} loading={rosterLoading} currentAddress={address} />
+            <RosterList roster={roster} loading={rosterLoading} currentAddress={address} error={rosterError} />
           </div>
 
           {/* ── Danger Zone ────────────────────────────────────────────── */}
@@ -293,13 +324,22 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
 }
 
 // ── Roster List sub-component ─────────────────────────────────────────────────
-function RosterList({ roster, loading, currentAddress }) {
+function RosterList({ roster, loading, currentAddress, error }) {
   if (loading) return (
     <div style={{ display:"flex", flexDirection:"column", gap:"6px" }}>
       {[...Array(2)].map((_, i) => (
         <div key={i} style={{ height:"52px", borderRadius:"6px", background:"var(--paper-2)", border:"1px solid var(--rule-light)", animation:"pulse 1.5s infinite", animationDelay:`${i*150}ms` }} />
       ))}
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}`}</style>
+    </div>
+  );
+
+  if (error) return (
+    <div style={{ background:"var(--danger-bg)", border:"1px solid #F5C6CB", borderRadius:"6px", padding:"12px", display:"flex", gap:"8px", alignItems:"flex-start" }}>
+      <span style={{ color:"var(--danger)", fontWeight:700, flexShrink:0 }}>⚠</span>
+      <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:"var(--danger)", lineHeight:1.5, margin:0 }}>
+        {error}
+      </p>
     </div>
   );
 
