@@ -292,48 +292,72 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
     return updates;
   },[]);
 
-  const fetchHistory=useCallback(async(contract,provider)=>{
+  const fetchHistory=useCallback(async(contract,provider,projId)=>{
     const currentBlock=await provider.getBlockNumber();
-    const deployBlock=Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK??0);
-    const CHUNK=9; let allLogs=[];
-    const filter=contract.filters.ContributionLogged(projectId);
-    for(let from=deployBlock;from<=currentBlock;from+=CHUNK){
+    const deployBlock=Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK||10823551);
+    const fromBlock=Math.max(deployBlock,0);
+    const CHUNK=9; 
+    let allLogs=[];
+    const filter=contract.filters.ContributionLogged(projId);
+    for(let from=fromBlock;from<=currentBlock;from+=CHUNK){
       const to=Math.min(from+CHUNK-1,currentBlock);
       try{ const logs=await contract.queryFilter(filter,from,to); if(logs.length>0) allLogs=allLogs.concat(logs); }catch{}
     }
     return allLogs.map(log=>({contributor:log.args.contributor,cid:log.args.cid,role:log.args.creditRole,timestamp:log.args.timestamp,txHash:log.transactionHash}))
       .sort((a,b)=>Number(b.timestamp)-Number(a.timestamp));
-  },[projectId]);
+  },[]);
 
   const poll=useCallback(async()=>{
     if(!contractRef.current||!providerRef.current) return;
     try{
-      const history=await fetchHistory(contractRef.current,providerRef.current);
-      if(history.length>prevCountRef.current&&prevCountRef.current>0){
-        const added=history.slice(0,history.length-prevCountRef.current);
+      const history=await fetchHistory(contractRef.current,providerRef.current,projectId);
+      const prevCount=prevCountRef.current;
+      
+      if(history.length>prevCount&&prevCount>0){
+        const added=history.slice(0,history.length-prevCount);
         setNewIds(prev=>{const s=new Set(prev);added.forEach(e=>s.add(e.txHash+"-"+e.timestamp));return s;});
         added.forEach(e=>setTimeout(()=>setNewIds(prev=>{const s=new Set(prev);s.delete(e.txHash+"-"+e.timestamp);return s;}),12000));
         toast.success("New contribution logged on-chain.",{style:{background:"var(--paper)",border:"1px solid var(--rule)",color:"var(--accent)"}});
       }
+      
+      prevCountRef.current=history.length;
+      setEntries(history);
+      setLastRefreshed(new Date());
+      
       const newAddrs=history.map(e=>e.contributor);
       const uncached=[...new Set(newAddrs)].filter(a=>!(a in profileCache));
-      if(uncached.length>0){ resolveProfiles(newAddrs,contractRef.current,profileCache).then(setProfileCache); }
-      prevCountRef.current=history.length; setEntries(history); setLastRefreshed(new Date());
+      if(uncached.length>0){
+        resolveProfiles(newAddrs,contractRef.current,profileCache).then(setProfileCache).catch(()=>{});
+      }
     }catch{}
-  },[fetchHistory,resolveProfiles,profileCache]);
+  },[projectId,fetchHistory,resolveProfiles,profileCache]);
 
   useEffect(()=>{
     if(!contractAddress||!contractABI||!projectId) return;
     let isMounted=true;
     setEntries([]);setLoading(true);setError("");setIsPolling(false);setProfileCache({});prevCountRef.current=0;
     clearInterval(pollTimerRef.current);
+    
     const init=async()=>{
       try{
-        const provider=getProvider();providerRef.current=provider;
-        const contract=new ethers.Contract(contractAddress,contractABI,provider);contractRef.current=contract;
-        const history=await fetchHistory(contract,provider);
-        const cache=await resolveProfiles(history.map(e=>e.contributor),contract,{});
-        if(isMounted){prevCountRef.current=history.length;setEntries(history);setProfileCache(cache);setLastRefreshed(new Date());setLoading(false);setIsPolling(true);}
+        const provider=getProvider();
+        providerRef.current=provider;
+        const contract=new ethers.Contract(contractAddress,contractABI,provider);
+        contractRef.current=contract;
+        
+        const history=await fetchHistory(contract,provider,projectId);
+        if(!isMounted) return;
+        
+        prevCountRef.current=history.length;
+        setEntries(history);
+        setLastRefreshed(new Date());
+        setLoading(false);
+        setIsPolling(true);
+        
+        const contributors=history.map(e=>e.contributor);
+        resolveProfiles(contributors,contract,{})
+          .then(cache=>{if(isMounted) setProfileCache(cache);})
+          .catch(()=>{});
       } catch (err) {
         if (isMounted) {
           setError(getFriendlyError(err, "Failed to load contributions."));
@@ -341,6 +365,7 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
         }
       }
     };
+    
     init();
     return()=>{isMounted=false;clearInterval(pollTimerRef.current);};
   },[contractAddress,contractABI,projectId,getProvider,fetchHistory,resolveProfiles]);
@@ -357,28 +382,42 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
     const t=setTimeout(async()=>{
       setLoading(true);
       try{
-        const h=await fetchHistory(contractRef.current,providerRef.current);
-        const cache=await resolveProfiles(h.map(e=>e.contributor),contractRef.current,profileCache);
-        prevCountRef.current=h.length;setEntries(h);setProfileCache(cache);setLastRefreshed(new Date());
+        const h=await fetchHistory(contractRef.current,providerRef.current,projectId);
+        if(!h) return;
+        prevCountRef.current=h.length;
+        setEntries(h);
+        setLastRefreshed(new Date());
+        setLoading(false);
+        
+        const contributors=h.map(e=>e.contributor);
+        resolveProfiles(contributors,contractRef.current,profileCache)
+          .then(cache=>setProfileCache(cache))
+          .catch(()=>{});
       } catch (err) {
         setError(getFriendlyError(err, "Refresh failed."));
-      } finally {
         setLoading(false);
       }
     },2500);
     return()=>clearTimeout(t);
-  },[refreshKey,fetchHistory,resolveProfiles,profileCache]);
+  },[refreshKey,projectId,fetchHistory,resolveProfiles,profileCache]);
 
   const handleRefresh=async()=>{
     if(!contractRef.current||!providerRef.current) return;
     setLoading(true);
     try{
-      const h=await fetchHistory(contractRef.current,providerRef.current);
-      const cache=await resolveProfiles(h.map(e=>e.contributor),contractRef.current,profileCache);
-      prevCountRef.current=h.length;setEntries(h);setProfileCache(cache);setLastRefreshed(new Date());
+      const h=await fetchHistory(contractRef.current,providerRef.current,projectId);
+      if(!h) return;
+      prevCountRef.current=h.length;
+      setEntries(h);
+      setLastRefreshed(new Date());
+      setLoading(false);
+      
+      const contributors=h.map(e=>e.contributor);
+      resolveProfiles(contributors,contractRef.current,profileCache)
+        .then(cache=>setProfileCache(cache))
+        .catch(()=>{});
     } catch (err) {
       setError(getFriendlyError(err, "Refresh failed."));
-    } finally {
       setLoading(false);
     }
   };
