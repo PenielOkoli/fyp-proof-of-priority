@@ -116,13 +116,13 @@ export default function TimelineEntry({
           </div>
         </div>
 
-        {isDisputed && showDisputeReason && disputeReason && (
+        {isDisputed && showDisputeReason && (
           <div style={{ background: "#FCA5A5", borderRadius: "6px", padding: "10px 12px", marginBottom: "16px", borderLeft: "3px solid #DC2626" }}>
             <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: "#7F1D1D", margin: "0 0 4px 0", fontWeight: "600" }}>
               Dispute Reason:
             </p>
             <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: "#7F1D1D", margin: 0, lineHeight: 1.5, wordBreak: "break-word" }}>
-              {disputeReason}
+              {disputeReason || "Reason unavailable. The contribution has been flagged as disputed."}
             </p>
           </div>
         )}
@@ -156,13 +156,13 @@ export default function TimelineEntry({
                 {entry.role}
               </span>
 
-              {isDisputed && disputeReason && (
+              {isDisputed && (
                 <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: "4px", padding: "7px 9px", maxWidth: "300px" }}>
                   <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "#991B1B", textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 4px 0", fontWeight: 700 }}>
                     Dispute reason
                   </p>
                   <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "10px", color: "#7F1D1D", margin: 0, lineHeight: 1.5, wordBreak: "break-word" }}>
-                    {disputeReason}
+                    {disputeReason || "Reason unavailable. Only the dispute flag is stored on-chain."}
                   </p>
                 </div>
               )}

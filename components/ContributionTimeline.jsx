@@ -80,7 +80,12 @@ export default function ContributionTimeline({
   }, []);
 
   const mergeDisputedEntries = useCallback((updates) => {
-    const next = { ...disputedEntriesRef.current, ...updates };
+    const next = { ...disputedEntriesRef.current };
+    Object.entries(updates).forEach(([key, value]) => {
+      if (value !== "" || !Object.prototype.hasOwnProperty.call(next, key)) {
+        next[key] = value;
+      }
+    });
     disputedEntriesRef.current = next;
     setDisputedEntries(next);
   }, []);
