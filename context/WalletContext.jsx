@@ -49,7 +49,26 @@ export function WalletProvider({ children, contractAddress, contractABI }) {
 
   const connect = useCallback(async () => {
     setError("");
-    if (!window.ethereum) { setError("MetaMask is not installed."); return; }
+
+    // ── No injected provider detected ────────────────────────────────────────
+    if (!window.ethereum) {
+      const ua = navigator.userAgent || "";
+      const isMobile = /android/i.test(ua) || /iphone|ipad|ipod/i.test(ua);
+
+      if (isMobile) {
+        // Redirect into MetaMask's in-app browser so window.ethereum becomes
+        // available when the user returns to the page.
+        window.location.href =
+          "https://metamask.app.link/dapp/dlt-research-project.vercel.app";
+        return;
+      }
+
+      // Desktop with no extension installed
+      setError("MetaMask is not installed. Please install it from metamask.io.");
+      return;
+    }
+
+    // ── Standard MetaMask extension flow ────────────────────────────────────
     setIsConnecting(true);
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
@@ -61,7 +80,11 @@ export function WalletProvider({ children, contractAddress, contractABI }) {
       const onSepolia = await checkNetwork();
       if (onSepolia) await fetchProfile(addr);
     } catch (err) {
-      setError(err?.code === 4001 ? "Connection rejected." : getFriendlyError(err, "Failed to connect."));
+      setError(
+        err?.code === 4001
+          ? "Connection rejected."
+          : err?.message ?? "Failed to connect."
+      );
     } finally {
       setIsConnecting(false);
     }
