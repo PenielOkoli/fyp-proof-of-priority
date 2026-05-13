@@ -279,12 +279,13 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
   // projectId is the only value here that can legitimately change.
   },[projectId,fetchHistory,resolveProfiles]);
 
+
+  // 1. Turn the array into a primitive string so React can compare it safely
+  const abiString = JSON.stringify(contractABI);
+  
   // ── Initial load — runs once per [contractAddress, contractABI, projectId] change ──
   useEffect(()=>{
-    if(!contractAddress||!contractABI||!projectId) return;
-    let isMounted=true;
     setEntries([]);setLoading(true);setError("");setIsPolling(false);
-    // Reset profile cache for the new project.
     profileCacheRef.current={};
     setProfileCache({});
     prevCountRef.current=0;
@@ -294,7 +295,9 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
       try{
         const provider=getProvider();
         providerRef.current=provider;
-        const contract=new ethers.Contract(contractAddress,contractABI,provider);
+        
+        // 3. Parse it back into an array exactly right here for ethers.js
+        const contract=new ethers.Contract(contractAddress,JSON.parse(abiString),provider);
         contractRef.current=contract;
 
         const history=await fetchHistory(contract,provider,projectId);
@@ -325,7 +328,7 @@ export default function ContributionTimeline({ contractAddress, contractABI, pro
     init();
     return()=>{isMounted=false;clearInterval(pollTimerRef.current);};
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[contractAddress,contractABI,projectId]);
+  },[contractAddress,abiString,projectId]);
   // NOTE: getProvider, fetchHistory, resolveProfiles are intentionally omitted —
   // they are stable callbacks whose identity never changes after mount.
 
