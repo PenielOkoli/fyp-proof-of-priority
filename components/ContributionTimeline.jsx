@@ -199,8 +199,6 @@ export default function ContributionTimeline({
         allLogs = fallbackLogs.filter(log => log.args.projectId === projId);
       }
 
-      if (allLogs.length === 0) return storedEntries;
-
       const txByKey = new Map(
         allLogs.map(log => [
           `${log.args.contributor.toLowerCase()}-${log.args.timestamp.toString()}-${log.args.cid}`,
@@ -309,7 +307,7 @@ export default function ContributionTimeline({
       }
 
       const disputes = await fetchDisputeEvents(contractRef.current, projectId);
-      if (isMountedRef.current) setDisputedEntries(disputes);
+      if (isMountedRef.current) setDisputedEntries(prev => ({ ...prev, ...disputes }));
 
       const finStatus = await fetchFinalizationStatus(contractRef.current, projectId);
       if (isMountedRef.current) setFinalizationStatus(finStatus);
@@ -353,7 +351,7 @@ export default function ContributionTimeline({
       }
 
       const disputes = await fetchDisputeEvents(contractRef.current, projectId);
-      if (isMountedRef.current) setDisputedEntries(disputes);
+      if (isMountedRef.current) setDisputedEntries(prev => ({ ...prev, ...disputes }));
 
       const finStatus = await fetchFinalizationStatus(contractRef.current, projectId);
       if (isMountedRef.current) setFinalizationStatus(finStatus);
@@ -415,8 +413,7 @@ export default function ContributionTimeline({
         }
 
         const disputes = await fetchDisputeEvents(contract, projectId);
-        if (isMountedRef.current) setDisputedEntries(disputes);
-
+      if (isMountedRef.current) setDisputedEntries(prev => ({ ...prev, ...disputes }));
         const finStatus = await fetchFinalizationStatus(contract, projectId);
         if (isMountedRef.current) setFinalizationStatus(finStatus);
 
