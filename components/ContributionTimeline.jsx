@@ -100,7 +100,13 @@ export default function ContributionTimeline({
       const allEvents = {};
 
       const filter = contract.filters.ContributionDisputed(projId);
-      const logs = await fetchLogsInRanges(contract, filter, fromBlock, currentBlock);
+      let logs = await fetchLogsInRanges(contract, filter, fromBlock, currentBlock);
+
+      if (logs.length === 0) {
+        const fallbackLogs = await fetchLogsInRanges(contract, contract.filters.ContributionDisputed(), fromBlock, currentBlock);
+        logs = fallbackLogs.filter(log => log.args.projectId === projId);
+      }
+
       logs.forEach(log => {
         allEvents[log.args.contributionHash] = log.args.reason;
       });
@@ -469,7 +475,7 @@ export default function ContributionTimeline({
       return false;
     }
 
-    const key = entry.txHash + "-" + entry.timestamp;
+    const key = (entry.txHash || entry.cid) + "-" + entry.timestamp;
     setFlaggingDisputeKey(key);
     try {
       const contract = await getWalletContract();
