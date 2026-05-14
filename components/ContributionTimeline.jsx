@@ -142,7 +142,11 @@ export default function ContributionTimeline({
         }
 
         logs.forEach(log => {
-          allEvents[log.args.contributionHash] = log.args.reason;
+          const hash = log.args.contributionHash;
+          const reason = log.args.reason ?? "";
+          if (!allEvents[hash]) {
+            allEvents[hash] = reason;
+          }
         });
       } catch {
         eventQueriesDisabledRef.current = true;
@@ -155,7 +159,10 @@ export default function ContributionTimeline({
           const disputed = await contract.checkIfDisputed(projId, entry.contributor, entry.timestamp);
           if (disputed) {
             const hash = buildContributionHash(projId, entry.contributor, entry.timestamp);
-            allEvents[hash] = "";
+            if (!(hash in allEvents)) {
+              allEvents[hash] = "";
+            }
+            
           }
         } catch {
           // ignore failures from on-chain lookup and preserve any loaded events
