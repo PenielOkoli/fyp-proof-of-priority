@@ -1,7 +1,13 @@
 export const GATEWAY = process.env.NEXT_PUBLIC_PINATA_GATEWAY ?? "https://gateway.pinata.cloud/ipfs";
 export const POLL_INTERVAL = 30000;
-export const EVENT_QUERY_CHUNK_SIZE = 10;
-export const MIN_EVENT_QUERY_CHUNK_SIZE = 5;
+
+// Use a large chunk size so we make as few RPC calls as possible.
+// Alchemy and most providers support up to 10,000 blocks per request;
+// using 2,000 is a safe default that still dramatically reduces the number
+// of round-trips compared to the previous value of 10.
+export const EVENT_QUERY_CHUNK_SIZE = 2000;
+export const MIN_EVENT_QUERY_CHUNK_SIZE = 100;
+
 export const DEFAULT_FINALIZATION_DAYS = 7;
 export const SECONDS_PER_DAY = 86400;
 

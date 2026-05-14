@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
@@ -18,6 +19,11 @@ import TimelineHeader from "./contribution-timeline/TimelineHeader";
 import TimelineSkeleton from "./contribution-timeline/TimelineSkeleton";
 import { getContributionHash as buildContributionHash } from "./contribution-timeline/utils";
 
+// ---------------------------------------------------------------------------
+// fetchLogsInRanges — chunked log query with binary-split fallback
+// Uses large chunks (2000 blocks) so a typical Sepolia deployment only needs
+// a handful of RPC calls instead of hundreds.
+// ---------------------------------------------------------------------------
 async function fetchLogsInRanges(contract, filter, fromBlock, toBlock) {
   async function queryRange(start, end, chunkSize) {
     if (start > end) return [];
@@ -72,6 +78,8 @@ export default function ContributionTimeline({
   const refreshInFlightRef = useRef(false);
   const eventQueriesDisabledRef = useRef(false);
   const entriesRef = useRef([]);
+  // disputedEntriesRef is the single source of truth — never overwrite a real
+  // reason with an empty string (guards against poll races).
   const disputedEntriesRef = useRef({});
 
   const updateEntries = useCallback((nextEntries) => {
@@ -79,19 +87,25 @@ export default function ContributionTimeline({
     setEntries(nextEntries);
   }, []);
 
+  // mergeDisputedEntries only writes; it never deletes keys and never
+  // overwrites a non-empty reason with an empty one.
   const mergeDisputedEntries = useCallback((updates) => {
+    let changed = false;
     const next = { ...disputedEntriesRef.current };
     Object.entries(updates).forEach(([key, value]) => {
       const existing = next[key];
       const hasGoodReason = typeof existing === "string" && existing.length > 0;
       const incomingIsEmpty = typeof value !== "string" || value.length === 0;
-      // Never overwrite a real reason with empty/undefined
-      if (!(hasGoodReason && incomingIsEmpty)) {
+      if (hasGoodReason && incomingIsEmpty) return; // never overwrite a real reason
+      if (next[key] !== (value ?? "")) {
         next[key] = value ?? "";
+        changed = true;
       }
     });
-    disputedEntriesRef.current = next;
-    setDisputedEntries(next);
+    if (changed) {
+      disputedEntriesRef.current = next;
+      setDisputedEntries(next);
+    }
   }, []);
 
   const abiString = useMemo(() => JSON.stringify(contractABI), [contractABI]);
@@ -127,35 +141,31 @@ export default function ContributionTimeline({
     return updates;
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // fetchDisputeEvents — fetches ContributionDisputed events once and merges.
+  // Avoids a per-entry checkIfDisputed loop (which was very slow); falls back
+  // to the boolean check only for entries whose hash is still unknown.
+  // ---------------------------------------------------------------------------
   const fetchDisputeEvents = useCallback(async (contract, projId, entries = []) => {
     const allEvents = {};
 
     if (!eventQueriesDisabledRef.current) {
-      // Retry up to 3 times with increasing delay to handle Alchemy rate limits
-      // that occur when this is called after a burst of RPC calls on page load.
       let attempt = 0;
       const maxAttempts = 3;
-
       while (attempt < maxAttempts) {
         try {
           const currentBlock = await contract.provider.getBlockNumber();
           const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 10823551);
           const fromBlock = Math.max(deployBlock, 0);
 
-          // Always fetch ALL ContributionDisputed events unfiltered and filter
-          // client-side. Filtering by indexed string topic is unreliable on many
-          // RPC providers because ethers encodes it as keccak256(string) which
-          // some nodes silently reject and return empty results.
           let allLogs = [];
           try {
-            // Try full range in one shot first — dispute events are rare
             allLogs = await contract.queryFilter(
               contract.filters.ContributionDisputed(),
               fromBlock,
               currentBlock
             );
           } catch {
-            // If full range fails (e.g. range too large), fall back to chunked
             allLogs = await fetchLogsInRanges(
               contract,
               contract.filters.ContributionDisputed(),
@@ -169,39 +179,39 @@ export default function ContributionTimeline({
             .forEach(log => {
               const hash = log.args.contributionHash;
               const reason = typeof log.args.reason === "string" ? log.args.reason : "";
-              // Never overwrite a real reason with an empty one
-              if (!(hash in allEvents) || allEvents[hash] === "") {
+              if (!(hash in allEvents) || (allEvents[hash] === "" && reason !== "")) {
                 allEvents[hash] = reason;
               }
             });
 
-          break; // success — exit retry loop
-
+          break;
         } catch (err) {
           attempt++;
-          console.warn(`[fetchDisputeEvents] attempt ${attempt} failed:`, err?.message ?? err);
           if (attempt >= maxAttempts) {
             eventQueriesDisabledRef.current = true;
           } else {
-            // Back off: 1s after first failure, 2s after second
             await new Promise(res => setTimeout(res, attempt * 1000));
           }
         }
       }
     }
 
-    // Boolean fallback: only for entries not found via events above
-    if (entries.length > 0) {
-      await Promise.all(entries.map(async (entry) => {
+    // Boolean fallback only for entries not already resolved via events.
+    // Skip this entirely if we already know about all hashes to avoid
+    // N extra RPC calls on every poll.
+    const unknownEntries = entries.filter(entry => {
+      const hash = buildContributionHash(projId, entry.contributor, entry.timestamp);
+      return !(hash in allEvents) && !(hash in disputedEntriesRef.current);
+    });
+
+    if (unknownEntries.length > 0) {
+      await Promise.all(unknownEntries.map(async (entry) => {
         try {
           const hash = buildContributionHash(projId, entry.contributor, entry.timestamp);
-          if (hash in allEvents) return; // already have it from events
           const disputed = await contract.checkIfDisputed(
             projId, entry.contributor, entry.timestamp
           );
-          if (disputed) {
-            allEvents[hash] = ""; // flag only, reason unavailable via this path
-          }
+          if (disputed) allEvents[hash] = allEvents[hash] ?? "";
         } catch {
           // ignore
         }
@@ -235,7 +245,6 @@ export default function ContributionTimeline({
     if (typeof window === "undefined" || !window.ethereum) {
       throw new Error("MetaMask not found.");
     }
-
     const provider = new ethers.BrowserProvider(window.ethereum);
     await provider.send("eth_requestAccounts", []);
     const signer = await provider.getSigner();
@@ -247,11 +256,14 @@ export default function ContributionTimeline({
     if (!supportsEditableFinalizationWindow) {
       return contract.initiateFinalization(projectId);
     }
-
     const durationSeconds = BigInt(Math.round(Number(finalizationDays) * SECONDS_PER_DAY));
     return contract.initiateFinalization(projectId, durationSeconds);
   }, [finalizationDays, getWalletContract, projectId, supportsEditableFinalizationWindow]);
 
+  // ---------------------------------------------------------------------------
+  // fetchHistory — prefers getContributions() (one RPC call) for the entry
+  // list, then does a single event query to attach tx hashes.
+  // ---------------------------------------------------------------------------
   const fetchHistory = useCallback(async (contract, provider, projId) => {
     let storedEntries = [];
 
@@ -270,6 +282,8 @@ export default function ContributionTimeline({
       storedEntries = [];
     }
 
+    // Build lookup maps from previously cached tx hashes so we don't lose them
+    // across re-fetches (e.g. when polling returns entries without txHash).
     const previousTxByKey = new Map(
       entriesRef.current.map(entry => [
         `${entry.contributor.toLowerCase()}-${entry.timestamp.toString()}-${entry.cid}`,
@@ -297,6 +311,13 @@ export default function ContributionTimeline({
       return storedEntries.map(entry => ({ ...entry, txHash: restoreTxHash(entry) }));
     }
 
+    // Only attempt event queries if we don't already have all tx hashes cached.
+    const needsTxHash = storedEntries.some(e => !restoreTxHash(e));
+
+    if (!needsTxHash) {
+      return storedEntries.map(entry => ({ ...entry, txHash: restoreTxHash(entry) }));
+    }
+
     try {
       const currentBlock = await provider.getBlockNumber();
       const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 10823551);
@@ -305,9 +326,6 @@ export default function ContributionTimeline({
       let allLogs = await fetchLogsInRanges(contract, primaryFilter, fromBlock, currentBlock);
 
       if (allLogs.length === 0 && storedEntries.length > 0) {
-        // Some RPC providers may not support filtering on string-indexed event
-        // topics reliably. Retry by loading all ContributionLogged events and
-        // filtering client-side.
         const fallbackLogs = await fetchLogsInRanges(
           contract,
           contract.filters.ContributionLogged(),
@@ -359,6 +377,12 @@ export default function ContributionTimeline({
     }
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // poll — lightweight: only re-fetches contributions + finalization.
+  // Dispute data is NOT re-fetched on every poll; it is only updated when a
+  // new entry appears (count changes) or when explicitly refreshed. This
+  // prevents the poll from racing with and clobbering dispute reasons.
+  // ---------------------------------------------------------------------------
   const poll = useCallback(async () => {
     if (!contractRef.current || !providerRef.current || !isMountedRef.current) return;
     if (pollInFlightRef.current) return;
@@ -391,6 +415,12 @@ export default function ContributionTimeline({
             color: "var(--accent)",
           },
         });
+
+        // New entries appeared — refresh dispute data for only the new ones.
+        if (contractRef.current) {
+          const disputes = await fetchDisputeEvents(contractRef.current, projectId, added);
+          if (isMountedRef.current) mergeDisputedEntries(disputes);
+        }
       }
 
       prevCountRef.current = history.length;
@@ -409,9 +439,6 @@ export default function ContributionTimeline({
           })
           .catch(() => { });
       }
-
-      const disputes = await fetchDisputeEvents(contractRef.current, projectId, history);
-      if (isMountedRef.current) mergeDisputedEntries(disputes);
 
       const finStatus = await fetchFinalizationStatus(contractRef.current, projectId);
       if (isMountedRef.current) setFinalizationStatus(finStatus);
@@ -433,6 +460,11 @@ export default function ContributionTimeline({
     updateEntries,
   ]);
 
+  // ---------------------------------------------------------------------------
+  // refreshData — full refresh including disputes (triggered manually or via
+  // refreshKey). Dispute reasons fetched here are merged additively so they
+  // are never lost.
+  // ---------------------------------------------------------------------------
   const refreshData = useCallback(async (fallbackMessage) => {
     if (!contractRef.current || !providerRef.current) return;
     if (refreshInFlightRef.current) return;
@@ -480,6 +512,11 @@ export default function ContributionTimeline({
     updateEntries,
   ]);
 
+  // ---------------------------------------------------------------------------
+  // Initialisation effect — runs once per projectId change.
+  // Sequence: contributions first (renders quickly), then profiles + disputes
+  // in parallel, then start polling.
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     setEntries([]);
     setLoading(true);
@@ -502,39 +539,43 @@ export default function ContributionTimeline({
         const contract = new ethers.Contract(contractAddress, JSON.parse(abiString), provider);
         contractRef.current = contract;
 
+        // ── Step 1: fetch contribution list (fast — one eth_call) ──────────
         const history = await fetchHistory(contract, provider, projectId);
         if (!isMountedRef.current) return;
 
         prevCountRef.current = history.length;
         updateEntries(history);
         setLastRefreshed(new Date());
-        setLoading(false);
-        // NOTE: setIsPolling intentionally moved to AFTER disputes load below
-        // so the poll timer cannot race and overwrite dispute reasons before
-        // the initial fetch completes.
+        setLoading(false); // show entries immediately, before slower queries
 
+        // ── Step 2: profiles + disputes + finalization in parallel ──────────
         const contributors = history.map(e => e.contributor);
-        const profileResult = await resolveProfiles(contributors, contract);
-        if (isMountedRef.current) {
-          profileCacheRef.current = profileResult;
-          setProfileCache(profileResult);
-        }
 
-        // Small delay to allow Alchemy rate limit to recover after the burst
-        // of RPC calls from fetchHistory + resolveProfiles above.
-        await new Promise(res => setTimeout(res, 500));
+        const [profileResult, disputes, finStatus, adminStatus] = await Promise.allSettled([
+          resolveProfiles(contributors, contract),
+          fetchDisputeEvents(contract, projectId, history),
+          fetchFinalizationStatus(contract, projectId),
+          checkIsProjectAdmin(contract, projectId),
+        ]);
+
         if (!isMountedRef.current) return;
 
-        const disputes = await fetchDisputeEvents(contract, projectId, history);
-        if (isMountedRef.current) mergeDisputedEntries(disputes);
+        if (profileResult.status === "fulfilled") {
+          profileCacheRef.current = profileResult.value;
+          setProfileCache(profileResult.value);
+        }
+        if (disputes.status === "fulfilled") {
+          mergeDisputedEntries(disputes.value);
+        }
+        if (finStatus.status === "fulfilled") {
+          setFinalizationStatus(finStatus.value);
+        }
+        if (adminStatus.status === "fulfilled") {
+          setIsProjectAdmin(adminStatus.value);
+        }
 
-        const finStatus = await fetchFinalizationStatus(contract, projectId);
-        if (isMountedRef.current) setFinalizationStatus(finStatus);
-
-        const adminStatus = await checkIsProjectAdmin(contract, projectId);
-        if (isMountedRef.current) setIsProjectAdmin(adminStatus);
-
-        // Start polling only after all initial data including disputes is loaded
+        // Start polling only after all initial data is loaded so the first
+        // poll doesn't race with dispute state.
         if (isMountedRef.current) setIsPolling(true);
 
       } catch (err) {
@@ -556,7 +597,6 @@ export default function ContributionTimeline({
 
   useEffect(() => {
     if (!isPolling) return;
-
     pollTimerRef.current = setInterval(poll, POLL_INTERVAL);
     return () => clearInterval(pollTimerRef.current);
   }, [isPolling, poll]);
