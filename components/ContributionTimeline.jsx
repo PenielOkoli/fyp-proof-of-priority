@@ -131,46 +131,62 @@ export default function ContributionTimeline({
     const allEvents = {};
 
     if (!eventQueriesDisabledRef.current) {
-      try {
-        const currentBlock = await contract.provider.getBlockNumber();
-        const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 10823551);
-        const fromBlock = Math.max(deployBlock, 0);
+      // Retry up to 3 times with increasing delay to handle Alchemy rate limits
+      // that occur when this is called after a burst of RPC calls on page load.
+      let attempt = 0;
+      const maxAttempts = 3;
 
-        // Always fetch ALL ContributionDisputed events unfiltered and filter
-        // client-side. Filtering by indexed string topic is unreliable on many
-        // RPC providers because ethers encodes it as keccak256(string) which
-        // some nodes silently reject and return empty results.
-        let allLogs = [];
+      while (attempt < maxAttempts) {
         try {
-          // Try full range in one shot first — dispute events are rare
-          allLogs = await contract.queryFilter(
-            contract.filters.ContributionDisputed(),
-            fromBlock,
-            currentBlock
-          );
-        } catch {
-          // If full range fails (e.g. range too large), fall back to chunked
-          allLogs = await fetchLogsInRanges(
-            contract,
-            contract.filters.ContributionDisputed(),
-            fromBlock,
-            currentBlock
-          );
+          const currentBlock = await contract.provider.getBlockNumber();
+          const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 10823551);
+          const fromBlock = Math.max(deployBlock, 0);
+
+          // Always fetch ALL ContributionDisputed events unfiltered and filter
+          // client-side. Filtering by indexed string topic is unreliable on many
+          // RPC providers because ethers encodes it as keccak256(string) which
+          // some nodes silently reject and return empty results.
+          let allLogs = [];
+          try {
+            // Try full range in one shot first — dispute events are rare
+            allLogs = await contract.queryFilter(
+              contract.filters.ContributionDisputed(),
+              fromBlock,
+              currentBlock
+            );
+          } catch {
+            // If full range fails (e.g. range too large), fall back to chunked
+            allLogs = await fetchLogsInRanges(
+              contract,
+              contract.filters.ContributionDisputed(),
+              fromBlock,
+              currentBlock
+            );
+          }
+
+          allLogs
+            .filter(log => log.args.projectId === projId)
+            .forEach(log => {
+              const hash = log.args.contributionHash;
+              const reason = typeof log.args.reason === "string" ? log.args.reason : "";
+              // Never overwrite a real reason with an empty one
+              if (!(hash in allEvents) || allEvents[hash] === "") {
+                allEvents[hash] = reason;
+              }
+            });
+
+          break; // success — exit retry loop
+
+        } catch (err) {
+          attempt++;
+          console.warn(`[fetchDisputeEvents] attempt ${attempt} failed:`, err?.message ?? err);
+          if (attempt >= maxAttempts) {
+            eventQueriesDisabledRef.current = true;
+          } else {
+            // Back off: 1s after first failure, 2s after second
+            await new Promise(res => setTimeout(res, attempt * 1000));
+          }
         }
-
-        allLogs
-          .filter(log => log.args.projectId === projId)
-          .forEach(log => {
-            const hash = log.args.contributionHash;
-            const reason = typeof log.args.reason === "string" ? log.args.reason : "";
-            // Never overwrite a real reason with an empty one
-            if (!(hash in allEvents) || allEvents[hash] === "") {
-              allEvents[hash] = reason;
-            }
-          });
-
-      } catch {
-        eventQueriesDisabledRef.current = true;
       }
     }
 
@@ -493,9 +509,9 @@ export default function ContributionTimeline({
         updateEntries(history);
         setLastRefreshed(new Date());
         setLoading(false);
-        // NOTE: setIsPolling intentionally moved to AFTER disputes load below,
-        // so the poll timer cannot race and overwrite dispute reasons with empty
-        // results before the initial fetch has completed.
+        // NOTE: setIsPolling intentionally moved to AFTER disputes load below
+        // so the poll timer cannot race and overwrite dispute reasons before
+        // the initial fetch completes.
 
         const contributors = history.map(e => e.contributor);
         const profileResult = await resolveProfiles(contributors, contract);
@@ -503,6 +519,11 @@ export default function ContributionTimeline({
           profileCacheRef.current = profileResult;
           setProfileCache(profileResult);
         }
+
+        // Small delay to allow Alchemy rate limit to recover after the burst
+        // of RPC calls from fetchHistory + resolveProfiles above.
+        await new Promise(res => setTimeout(res, 500));
+        if (!isMountedRef.current) return;
 
         const disputes = await fetchDisputeEvents(contract, projectId, history);
         if (isMountedRef.current) mergeDisputedEntries(disputes);
