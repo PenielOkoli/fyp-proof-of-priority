@@ -85,7 +85,7 @@ export default function ContributionTimeline({
       const existing = next[key];
       const hasGoodReason = typeof existing === "string" && existing.length > 0;
       const incomingIsEmpty = typeof value !== "string" || value.length === 0;
-      // Don't overwrite a real reason with empty/undefined
+      // Never overwrite a real reason with empty/undefined
       if (!(hasGoodReason && incomingIsEmpty)) {
         next[key] = value ?? "";
       }
@@ -129,7 +129,6 @@ export default function ContributionTimeline({
 
   const fetchDisputeEvents = useCallback(async (contract, projId, entries = []) => {
     const allEvents = {};
-    const shouldTryOnChain = entries.length > 0;
 
     if (!eventQueriesDisabledRef.current) {
       try {
@@ -137,43 +136,58 @@ export default function ContributionTimeline({
         const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 10823551);
         const fromBlock = Math.max(deployBlock, 0);
 
-        const filter = contract.filters.ContributionDisputed(projId);
-        let logs = await fetchLogsInRanges(contract, filter, fromBlock, currentBlock);
-
-        if (logs.length === 0) {
-          const fallbackLogs = await fetchLogsInRanges(contract, contract.filters.ContributionDisputed(), fromBlock, currentBlock);
-          logs = fallbackLogs.filter(log => log.args.projectId === projId);
+        // Always fetch ALL ContributionDisputed events unfiltered and filter
+        // client-side. Filtering by indexed string topic is unreliable on many
+        // RPC providers because ethers encodes it as keccak256(string) which
+        // some nodes silently reject and return empty results.
+        let allLogs = [];
+        try {
+          // Try full range in one shot first — dispute events are rare
+          allLogs = await contract.queryFilter(
+            contract.filters.ContributionDisputed(),
+            fromBlock,
+            currentBlock
+          );
+        } catch {
+          // If full range fails (e.g. range too large), fall back to chunked
+          allLogs = await fetchLogsInRanges(
+            contract,
+            contract.filters.ContributionDisputed(),
+            fromBlock,
+            currentBlock
+          );
         }
 
-        logs.forEach(log => {
-          const hash = log.args.contributionHash;
-          const reason = (typeof log.args.reason === "string" && log.args.reason.length > 0)
-            ? log.args.reason
-            : "";
-          // Never overwrite a real reason with an empty one
-          if (!(hash in allEvents) || allEvents[hash] === "") {
-            allEvents[hash] = reason;
-          }
-        });
+        allLogs
+          .filter(log => log.args.projectId === projId)
+          .forEach(log => {
+            const hash = log.args.contributionHash;
+            const reason = typeof log.args.reason === "string" ? log.args.reason : "";
+            // Never overwrite a real reason with an empty one
+            if (!(hash in allEvents) || allEvents[hash] === "") {
+              allEvents[hash] = reason;
+            }
+          });
+
       } catch {
         eventQueriesDisabledRef.current = true;
       }
     }
 
-    if (Object.keys(allEvents).length === 0 && shouldTryOnChain) {
+    // Boolean fallback: only for entries not found via events above
+    if (entries.length > 0) {
       await Promise.all(entries.map(async (entry) => {
         try {
-          const disputed = await contract.checkIfDisputed(projId, entry.contributor, entry.timestamp);
+          const hash = buildContributionHash(projId, entry.contributor, entry.timestamp);
+          if (hash in allEvents) return; // already have it from events
+          const disputed = await contract.checkIfDisputed(
+            projId, entry.contributor, entry.timestamp
+          );
           if (disputed) {
-            const hash = buildContributionHash(projId, entry.contributor, entry.timestamp);
-            // Only mark disputed with empty reason if not already found via events
-            if (!(hash in allEvents)) {
-              allEvents[hash] = "";
-            }
-            
+            allEvents[hash] = ""; // flag only, reason unavailable via this path
           }
         } catch {
-          // ignore failures from on-chain lookup and preserve any loaded events
+          // ignore
         }
       }));
     }
@@ -275,9 +289,15 @@ export default function ContributionTimeline({
       let allLogs = await fetchLogsInRanges(contract, primaryFilter, fromBlock, currentBlock);
 
       if (allLogs.length === 0 && storedEntries.length > 0) {
-        // Some RPC providers may not support filtering on string-indexed event topics reliably.
-        // Retry by loading all ContributionLogged events in range and filtering client-side.
-        const fallbackLogs = await fetchLogsInRanges(contract, contract.filters.ContributionLogged(), fromBlock, currentBlock);
+        // Some RPC providers may not support filtering on string-indexed event
+        // topics reliably. Retry by loading all ContributionLogged events and
+        // filtering client-side.
+        const fallbackLogs = await fetchLogsInRanges(
+          contract,
+          contract.filters.ContributionLogged(),
+          fromBlock,
+          currentBlock
+        );
         allLogs = fallbackLogs.filter(log => log.args.projectId === projId);
       }
 
@@ -473,7 +493,9 @@ export default function ContributionTimeline({
         updateEntries(history);
         setLastRefreshed(new Date());
         setLoading(false);
-        setIsPolling(true);
+        // NOTE: setIsPolling intentionally moved to AFTER disputes load below,
+        // so the poll timer cannot race and overwrite dispute reasons with empty
+        // results before the initial fetch has completed.
 
         const contributors = history.map(e => e.contributor);
         const profileResult = await resolveProfiles(contributors, contract);
@@ -483,12 +505,17 @@ export default function ContributionTimeline({
         }
 
         const disputes = await fetchDisputeEvents(contract, projectId, history);
-      if (isMountedRef.current) mergeDisputedEntries(disputes);
+        if (isMountedRef.current) mergeDisputedEntries(disputes);
+
         const finStatus = await fetchFinalizationStatus(contract, projectId);
         if (isMountedRef.current) setFinalizationStatus(finStatus);
 
         const adminStatus = await checkIsProjectAdmin(contract, projectId);
         if (isMountedRef.current) setIsProjectAdmin(adminStatus);
+
+        // Start polling only after all initial data including disputes is loaded
+        if (isMountedRef.current) setIsPolling(true);
+
       } catch (err) {
         if (isMountedRef.current) {
           setError(getFriendlyError(err, "Failed to load contributions."));
