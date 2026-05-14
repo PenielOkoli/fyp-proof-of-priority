@@ -82,8 +82,12 @@ export default function ContributionTimeline({
   const mergeDisputedEntries = useCallback((updates) => {
     const next = { ...disputedEntriesRef.current };
     Object.entries(updates).forEach(([key, value]) => {
-      if (value !== "" || !Object.prototype.hasOwnProperty.call(next, key)) {
-        next[key] = value;
+      const existing = next[key];
+      const hasGoodReason = typeof existing === "string" && existing.length > 0;
+      const incomingIsEmpty = typeof value !== "string" || value.length === 0;
+      // Don't overwrite a real reason with empty/undefined
+      if (!(hasGoodReason && incomingIsEmpty)) {
+        next[key] = value ?? "";
       }
     });
     disputedEntriesRef.current = next;
@@ -143,8 +147,11 @@ export default function ContributionTimeline({
 
         logs.forEach(log => {
           const hash = log.args.contributionHash;
-          const reason = log.args.reason ?? "";
-          if (!allEvents[hash]) {
+          const reason = (typeof log.args.reason === "string" && log.args.reason.length > 0)
+            ? log.args.reason
+            : "";
+          // Never overwrite a real reason with an empty one
+          if (!(hash in allEvents) || allEvents[hash] === "") {
             allEvents[hash] = reason;
           }
         });
@@ -159,6 +166,7 @@ export default function ContributionTimeline({
           const disputed = await contract.checkIfDisputed(projId, entry.contributor, entry.timestamp);
           if (disputed) {
             const hash = buildContributionHash(projId, entry.contributor, entry.timestamp);
+            // Only mark disputed with empty reason if not already found via events
             if (!(hash in allEvents)) {
               allEvents[hash] = "";
             }
