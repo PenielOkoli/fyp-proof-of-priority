@@ -25,6 +25,7 @@ export default function ProjectPage() {
     if (!projectId) {
       setIsHalted(false);
       setHaltStateSupported(true);
+      setFinalizationStatus(null); 
       return;
     }
 
@@ -49,6 +50,11 @@ export default function ProjectPage() {
       setHaltStateSupported(true);
     }
   }, [projectId]);
+
+  const [finalizationStatus, setFinalizationStatus] = useState<any>(null);
+
+  const isFinalizationActive =
+    finalizationStatus?.isActive === true && !finalizationStatus?.isFinalized;
 
   useEffect(() => {
     fetchHaltState();
@@ -138,6 +144,7 @@ export default function ProjectPage() {
                       contractABI={AcademicLedgerABI.abi}
                       projectId={projectId}
                       isHalted={isHalted}
+                      isFinalizationActive={isFinalizationActive}
                       onSuccess={() => setRefreshKey(k => k + 1)}
                     />
                     <ManageCollaborators
@@ -154,6 +161,7 @@ export default function ProjectPage() {
                     projectId={projectId}
                     readOnlyRpcUrl={RPC_URL}
                     refreshKey={refreshKey}
+                    onFinalizationStatusChange={setFinalizationStatus} 
                   />
                 </div>
                 <footer style={{ borderTop:"1px solid var(--rule)", paddingTop:"16px", marginTop:"40px", textAlign:"center", fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:"var(--ink-4)" }}>

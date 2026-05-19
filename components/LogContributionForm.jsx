@@ -1,11 +1,10 @@
 "use client";
 /**
- * components/LogContributionForm.jsx — v3
+ * components/LogContributionForm.jsx — v4
  *
- * NEW: Pre-flight IPFS authorization guard.
- * Before sending FormData to /api/upload, makes a read-only call to
- * authorizedCollaborators(projectId, walletAddress).
- * If false → abort immediately with a toast error. IPFS never receives the file.
+ * Added: isFinalizationActive prop.
+ * When project finalization is in progress (countdown running, not yet halted),
+ * the form is locked. It re-enables automatically once finalization is halted.
  */
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
@@ -34,7 +33,14 @@ const PHASE_LABEL = {
 
 function truncate(addr) { return addr ? `${addr.slice(0,6)}...${addr.slice(-4)}` : ""; }
 
-export default function LogContributionForm({ contractAddress, contractABI, projectId, onSuccess, isHalted = false }) {
+export default function LogContributionForm({
+  contractAddress,
+  contractABI,
+  projectId,
+  onSuccess,
+  isHalted = false,
+  isFinalizationActive = false,
+}) {
   const { address } = useWallet();
   const [file,     setFile]     = useState(null);
   const [role,     setRole]     = useState("Conceptualization");
@@ -45,12 +51,14 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
   const [dragging, setDragging] = useState(false);
 
   const isBusy = ["checking_auth","uploading_ipfs","awaiting_wallet","mining"].includes(phase);
+  // Form is locked when halted OR when finalization countdown is active
+  const isLocked = isHalted || isFinalizationActive;
 
   const handleDrop = useCallback((e) => {
     e.preventDefault(); setDragging(false);
-    if (isHalted) return;
+    if (isLocked) return;
     const f = e.dataTransfer.files?.[0]; if (f) setFile(f);
-  }, [isHalted]);
+  }, [isLocked]);
 
   const resetForm = () => {
     setFile(null); setRole("Conceptualization"); setPhase(PHASE.IDLE);
@@ -63,6 +71,16 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
     if (!contractAddress) return setErrorMsg("Contract address is not configured.");
     if (!contractABI)     return setErrorMsg("Contract ABI is not configured.");
     if (!projectId)       return setErrorMsg("No project selected.");
+
+    // Guard: finalization countdown in progress
+    if (isFinalizationActive) {
+      const msg = "Project finalization is in progress — contributions are frozen until the countdown is halted.";
+      setErrorMsg(msg);
+      toast.error(msg);
+      return;
+    }
+
+    // Guard: project halted under arbitration
     if (isHalted) {
       const haltMsg = "Project halted: contributions are frozen under arbitration.";
       setErrorMsg(haltMsg);
@@ -71,8 +89,6 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
     }
 
     // ── PRE-FLIGHT: Check authorization BEFORE uploading to IPFS ───────────
-    // This is the critical guard. A read-only call costs zero gas and
-    // prevents unauthorized users from polluting Pinata storage.
     const toastId = toast.loading("Verifying authorization\u2026");
     try {
       setPhase(PHASE.CHECKING_AUTH);
@@ -166,7 +182,17 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
   // ── Main form ─────────────────────────────────────────────────────────────
   return (
     <div style={{ border:"1px solid var(--rule)", borderRadius:"8px", overflow:"hidden", background:"var(--paper)" }}>
-      <div style={{ height:"2px", background: phase === PHASE.CHECKING_AUTH ? "var(--danger)" : isBusy ? "var(--indigo)" : "var(--accent)", transition:"background 0.4s" }} />
+      <div style={{
+        height:"2px",
+        background: phase === PHASE.CHECKING_AUTH
+          ? "var(--danger)"
+          : isFinalizationActive
+          ? "var(--warning, #D97706)"
+          : isBusy
+          ? "var(--indigo)"
+          : "var(--accent)",
+        transition:"background 0.4s"
+      }} />
       <div style={{ padding:"22px" }}>
         <div style={{ paddingBottom:"13px", borderBottom:"1px solid var(--rule-light)", marginBottom:"16px" }}>
           <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--accent)", textTransform:"uppercase", letterSpacing:"0.18em", marginBottom:"3px" }}>Submit Record</p>
@@ -177,23 +203,69 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
           </p>
         </div>
 
+        {/* Finalization-in-progress notice */}
+        {isFinalizationActive && (
+          <div style={{
+            background:"#FEF9EC",
+            border:"1px solid #E8D088",
+            color:"#92400E",
+            borderRadius:"6px",
+            padding:"10px 14px",
+            fontSize:"12px",
+            marginBottom:"14px",
+            lineHeight:1.6,
+          }}>
+            <strong>Finalization in Progress</strong> — New contributions are frozen while the countdown is active.
+            An authorized contributor can halt the countdown to re-enable submissions.
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} style={{ display:"flex", flexDirection:"column", gap:"14px" }}>
           {/* File */}
           <div>
             <label style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", textTransform:"uppercase", letterSpacing:"0.15em", display:"block", marginBottom:"6px" }}>Research Artifact</label>
-            <input type="file" onChange={e => { const f=e.target.files?.[0]; if(f) setFile(f); }} disabled={isBusy || isHalted} accept="*/*"
-              style={{ display:"block", width:"100%", color:"var(--ink-3)", fontFamily:"var(--font-geist-mono)", fontSize:"12px" }} />
-            <div onDragOver={e=>{e.preventDefault();if(!isHalted)setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={handleDrop}
-              style={{ marginTop:"8px", height:"46px", border:`1px dashed ${dragging?"var(--accent)":"var(--rule)"}`, borderRadius:"6px", background:dragging?"var(--accent-bg)":"var(--paper-2)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:file?"var(--accent)":"var(--ink-4)", transition:"all 0.15s" }}>
-              {file ? `\u2713  ${file.name}  (${(file.size/1024).toFixed(1)} KB)` : "or drag & drop here"}
+            <input
+              type="file"
+              onChange={e => { const f=e.target.files?.[0]; if(f) setFile(f); }}
+              disabled={isBusy || isLocked}
+              accept="*/*"
+              style={{ display:"block", width:"100%", color:"var(--ink-3)", fontFamily:"var(--font-geist-mono)", fontSize:"12px" }}
+            />
+            <div
+              onDragOver={e=>{e.preventDefault();if(!isLocked)setDragging(true);}}
+              onDragLeave={()=>setDragging(false)}
+              onDrop={handleDrop}
+              style={{
+                marginTop:"8px", height:"46px",
+                border:`1px dashed ${dragging?"var(--accent)":"var(--rule)"}`,
+                borderRadius:"6px",
+                background:dragging?"var(--accent-bg)":"var(--paper-2)",
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontFamily:"var(--font-geist-mono)", fontSize:"11px",
+                color:file?"var(--accent)":"var(--ink-4)",
+                transition:"all 0.15s",
+                opacity: isLocked ? 0.5 : 1,
+              }}>
+              {file ? `✓  ${file.name}  (${(file.size/1024).toFixed(1)} KB)` : "or drag & drop here"}
             </div>
           </div>
 
           {/* Role */}
           <div>
             <label htmlFor="credit-role" style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", textTransform:"uppercase", letterSpacing:"0.15em", display:"block", marginBottom:"6px" }}>CRediT Taxonomy Role</label>
-            <select id="credit-role" value={role} onChange={e=>setRole(e.target.value)} disabled={isBusy || isHalted}
-              style={{ width:"100%", padding:"9px 32px 9px 12px", borderRadius:"6px", border:"1px solid var(--rule)", background:"var(--paper)", color:"var(--ink)", fontFamily:"var(--font-geist-mono)", fontSize:"12px", appearance:"none", backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239A9A90' stroke-width='2'%3E%3Cpath d='M19 9l-7 7-7-7'/%3E%3C/svg%3E")`, backgroundRepeat:"no-repeat", backgroundPosition:"right 12px center" }}>
+            <select
+              id="credit-role"
+              value={role}
+              onChange={e=>setRole(e.target.value)}
+              disabled={isBusy || isLocked}
+              style={{
+                width:"100%", padding:"9px 32px 9px 12px", borderRadius:"6px",
+                border:"1px solid var(--rule)", background:"var(--paper)", color:"var(--ink)",
+                fontFamily:"var(--font-geist-mono)", fontSize:"12px", appearance:"none",
+                backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239A9A90' stroke-width='2'%3E%3Cpath d='M19 9l-7 7-7-7'/%3E%3C/svg%3E")`,
+                backgroundRepeat:"no-repeat", backgroundPosition:"right 12px center",
+                opacity: isLocked ? 0.5 : 1,
+              }}>
               {CREDIT_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
@@ -201,14 +273,19 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
           {/* Error */}
           {(phase === PHASE.ERROR || errorMsg) && (
             <div style={{ background:"var(--danger-bg)", border:"1px solid #F5C6CB", color:"var(--danger)", borderRadius:"6px", padding:"9px 12px", fontSize:"12px", display:"flex", gap:"8px", alignItems:"flex-start" }}>
-              <span style={{ flexShrink:0 }}>\u2715</span>
+              <span style={{ flexShrink:0 }}>✕</span>
               <span style={{ lineHeight:1.5 }}>{errorMsg}</span>
             </div>
           )}
 
           {/* Progress */}
           {isBusy && (
-            <div style={{ background: phase===PHASE.CHECKING_AUTH ? "#FEF9EC" : "var(--indigo-bg)", border:`1px solid ${phase===PHASE.CHECKING_AUTH?"#E8D088":"#C5CAE9"}`, color: phase===PHASE.CHECKING_AUTH?"var(--warning)":"var(--indigo)", borderRadius:"6px", padding:"9px 12px", fontSize:"12px", display:"flex", alignItems:"center", gap:"10px" }}>
+            <div style={{
+              background: phase===PHASE.CHECKING_AUTH ? "#FEF9EC" : "var(--indigo-bg)",
+              border:`1px solid ${phase===PHASE.CHECKING_AUTH?"#E8D088":"#C5CAE9"}`,
+              color: phase===PHASE.CHECKING_AUTH?"var(--warning)":"var(--indigo)",
+              borderRadius:"6px", padding:"9px 12px", fontSize:"12px", display:"flex", alignItems:"center", gap:"10px"
+            }}>
               <svg style={{ animation:"spin 1s linear infinite", width:"13px", height:"13px", flexShrink:0 }} fill="none" viewBox="0 0 24 24">
                 <circle style={{ opacity:0.2 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/>
                 <path style={{ opacity:0.8 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
@@ -218,9 +295,25 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
           )}
 
           {/* Submit */}
-          <button type="submit" disabled={isBusy || isHalted}
-            style={{ width:"100%", padding:"12px", borderRadius:"6px", border:"none", background:isBusy||isHalted?"var(--paper-3)":"var(--accent)", color:isBusy||isHalted?"var(--ink-4)":"#fff", fontSize:"13px", fontWeight:600, letterSpacing:"0.04em", cursor:isBusy||isHalted?"not-allowed":"pointer", pointerEvents:isBusy||isHalted?"none":"auto", transition:"background 0.2s" }}>
-            {isHalted ? "Project Halted — Contributions Frozen" : isBusy ? PHASE_LABEL[phase] : "Upload & Log Contribution"}
+          <button
+            type="submit"
+            disabled={isBusy || isLocked}
+            style={{
+              width:"100%", padding:"12px", borderRadius:"6px", border:"none",
+              background: isBusy || isLocked ? "var(--paper-3)" : "var(--accent)",
+              color: isBusy || isLocked ? "var(--ink-4)" : "#fff",
+              fontSize:"13px", fontWeight:600, letterSpacing:"0.04em",
+              cursor: isBusy || isLocked ? "not-allowed" : "pointer",
+              pointerEvents: isBusy || isLocked ? "none" : "auto",
+              transition:"background 0.2s",
+            }}>
+            {isHalted
+              ? "Project Halted — Contributions Frozen"
+              : isFinalizationActive
+              ? "Finalization in Progress — Contributions Frozen"
+              : isBusy
+              ? PHASE_LABEL[phase]
+              : "Upload & Log Contribution"}
           </button>
 
           <p style={{ textAlign:"center", fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", lineHeight:1.6 }}>

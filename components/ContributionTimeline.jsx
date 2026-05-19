@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
@@ -21,8 +20,6 @@ import { getContributionHash as buildContributionHash } from "./contribution-tim
 
 // ---------------------------------------------------------------------------
 // fetchLogsInRanges — chunked log query with binary-split fallback
-// Uses large chunks (2000 blocks) so a typical Sepolia deployment only needs
-// a handful of RPC calls instead of hundreds.
 // ---------------------------------------------------------------------------
 async function fetchLogsInRanges(provider, contract, filter, fromBlock, toBlock) {
   const contractAddress = contract.target ?? contract.address;
@@ -34,10 +31,7 @@ async function fetchLogsInRanges(provider, contract, filter, fromBlock, toBlock)
   async function parseRawLogs(rawLogs) {
     return rawLogs.map(log => {
       const parsed = contract.interface.parseLog(log);
-      return {
-        ...log,
-        ...parsed,
-      };
+      return { ...log, ...parsed };
     });
   }
 
@@ -83,6 +77,7 @@ export default function ContributionTimeline({
   projectId,
   readOnlyRpcUrl,
   refreshKey,
+  onFinalizationStatusChange, // NEW: lifted up to page.tsx
 }) {
   const [entries, setEntries] = useState([]);
   const [newIds, setNewIds] = useState(new Set());
@@ -110,17 +105,19 @@ export default function ContributionTimeline({
   const refreshInFlightRef = useRef(false);
   const eventQueriesDisabledRef = useRef(false);
   const entriesRef = useRef([]);
-  // disputedEntriesRef is the single source of truth — never overwrite a real
-  // reason with an empty string (guards against poll races).
   const disputedEntriesRef = useRef({});
+
+  // Helper: update finalization status locally AND notify parent
+  const applyFinalizationStatus = useCallback((status) => {
+    setFinalizationStatus(status);
+    onFinalizationStatusChange?.(status);
+  }, [onFinalizationStatusChange]);
 
   const updateEntries = useCallback((nextEntries) => {
     entriesRef.current = nextEntries;
     setEntries(nextEntries);
   }, []);
 
-  // mergeDisputedEntries only writes; it never deletes keys and never
-  // overwrites a non-empty reason with an empty one.
   const mergeDisputedEntries = useCallback((updates) => {
     let changed = false;
     const next = { ...disputedEntriesRef.current };
@@ -128,7 +125,7 @@ export default function ContributionTimeline({
       const existing = next[key];
       const hasGoodReason = typeof existing === "string" && existing.length > 0;
       const incomingIsEmpty = typeof value !== "string" || value.length === 0;
-      if (hasGoodReason && incomingIsEmpty) return; // never overwrite a real reason
+      if (hasGoodReason && incomingIsEmpty) return;
       if (next[key] !== (value ?? "")) {
         next[key] = value ?? "";
         changed = true;
@@ -173,11 +170,6 @@ export default function ContributionTimeline({
     return updates;
   }, []);
 
-  // ---------------------------------------------------------------------------
-  // fetchDisputeEvents — fetches ContributionDisputed events once and merges.
-  // Avoids a per-entry checkIfDisputed loop (which was very slow); falls back
-  // to the boolean check only for entries whose hash is still unknown.
-  // ---------------------------------------------------------------------------
   const fetchDisputeEvents = useCallback(async (contract, projId, entries = []) => {
     const allEvents = {};
 
@@ -229,9 +221,6 @@ export default function ContributionTimeline({
       }
     }
 
-    // Boolean fallback only for entries not already resolved via events.
-    // Skip this entirely if we already know about all hashes to avoid
-    // N extra RPC calls on every poll.
     const unknownEntries = entries.filter(entry => {
       const hash = buildContributionHash(projId, entry.contributor, entry.timestamp);
       return !(hash in allEvents) && !(hash in disputedEntriesRef.current);
@@ -283,9 +272,7 @@ export default function ContributionTimeline({
   const checkIsAuthorized = useCallback(async (contract, projId) => {
     try {
       const userAddress = await getWalletAddress();
-      if (await contract.isProjectAdmin(projId, userAddress)) {
-        return true;
-      }
+      if (await contract.isProjectAdmin(projId, userAddress)) return true;
       return await contract.isAuthorized(projId, userAddress);
     } catch {
       return false;
@@ -331,10 +318,6 @@ export default function ContributionTimeline({
     return contract.initiateFinalization(projectId, durationSeconds);
   }, [finalizationDays, getWalletContract, projectId, supportsEditableFinalizationWindow]);
 
-  // ---------------------------------------------------------------------------
-  // fetchHistory — prefers getContributions() (one RPC call) for the entry
-  // list, then does a single event query to attach tx hashes.
-  // ---------------------------------------------------------------------------
   const fetchHistory = useCallback(async (contract, provider, projId, { includeTxHashes = true } = {}) => {
     let storedEntries = [];
 
@@ -353,8 +336,6 @@ export default function ContributionTimeline({
       storedEntries = [];
     }
 
-    // Build lookup maps from previously cached tx hashes so we don't lose them
-    // across re-fetches (e.g. when polling returns entries without txHash).
     const previousTxByKey = new Map(
       entriesRef.current.map(entry => [
         `${entry.contributor.toLowerCase()}-${entry.timestamp.toString()}-${entry.cid}`,
@@ -382,9 +363,7 @@ export default function ContributionTimeline({
       return storedEntries.map(entry => ({ ...entry, txHash: restoreTxHash(entry) }));
     }
 
-    // Only attempt event queries if we don't already have all tx hashes cached.
     const needsTxHash = storedEntries.some(e => !restoreTxHash(e));
-
     if (!needsTxHash) {
       return storedEntries.map(entry => ({ ...entry, txHash: restoreTxHash(entry) }));
     }
@@ -395,21 +374,11 @@ export default function ContributionTimeline({
       const fromBlock = Math.max(deployBlock, 0);
 
       const primaryFilter = contract.filters.ContributionLogged(projId);
-      let allLogs = await fetchLogsInRanges(
-        provider,
-        contract,
-        primaryFilter,
-        fromBlock,
-        currentBlock
-      );
+      let allLogs = await fetchLogsInRanges(provider, contract, primaryFilter, fromBlock, currentBlock);
 
       if (allLogs.length === 0 && storedEntries.length > 0) {
         const fallbackLogs = await fetchLogsInRanges(
-          provider,
-          contract,
-          contract.filters.ContributionLogged(),
-          fromBlock,
-          currentBlock
+          provider, contract, contract.filters.ContributionLogged(), fromBlock, currentBlock
         );
         allLogs = fallbackLogs.filter(log => matchesIndexedProjectId(log, projId));
       }
@@ -457,10 +426,7 @@ export default function ContributionTimeline({
   }, []);
 
   // ---------------------------------------------------------------------------
-  // poll — lightweight: only re-fetches contributions + finalization.
-  // Dispute data is NOT re-fetched on every poll; it is only updated when a
-  // new entry appears (count changes) or when explicitly refreshed. This
-  // prevents the poll from racing with and clobbering dispute reasons.
+  // poll
   // ---------------------------------------------------------------------------
   const poll = useCallback(async () => {
     if (!contractRef.current || !providerRef.current || !isMountedRef.current) return;
@@ -495,7 +461,6 @@ export default function ContributionTimeline({
           },
         });
 
-        // New entries appeared — refresh dispute data for only the new ones.
         if (contractRef.current) {
           const disputes = await fetchDisputeEvents(contractRef.current, projectId, added);
           if (isMountedRef.current) mergeDisputedEntries(disputes);
@@ -520,7 +485,7 @@ export default function ContributionTimeline({
       }
 
       const finStatus = await fetchFinalizationStatus(contractRef.current, projectId);
-      if (isMountedRef.current) setFinalizationStatus(finStatus);
+      if (isMountedRef.current) applyFinalizationStatus(finStatus);
 
       const [adminStatus, authorizedStatus, strikeStatus] = await Promise.all([
         checkIsProjectAdmin(contractRef.current, projectId),
@@ -538,7 +503,10 @@ export default function ContributionTimeline({
       pollInFlightRef.current = false;
     }
   }, [
+    applyFinalizationStatus,
     checkIsProjectAdmin,
+    checkIsAuthorized,
+    checkHasDisputed,
     fetchDisputeEvents,
     fetchFinalizationStatus,
     fetchHistory,
@@ -549,9 +517,7 @@ export default function ContributionTimeline({
   ]);
 
   // ---------------------------------------------------------------------------
-  // refreshData — full refresh including disputes (triggered manually or via
-  // refreshKey). Dispute reasons fetched here are merged additively so they
-  // are never lost.
+  // refreshData
   // ---------------------------------------------------------------------------
   const refreshData = useCallback(async (fallbackMessage) => {
     if (!contractRef.current || !providerRef.current) return;
@@ -579,7 +545,7 @@ export default function ContributionTimeline({
       if (isMountedRef.current) mergeDisputedEntries(disputes);
 
       const finStatus = await fetchFinalizationStatus(contractRef.current, projectId);
-      if (isMountedRef.current) setFinalizationStatus(finStatus);
+      if (isMountedRef.current) applyFinalizationStatus(finStatus);
 
       const [adminStatus, authorizedStatus, strikeStatus] = await Promise.all([
         checkIsProjectAdmin(contractRef.current, projectId),
@@ -598,7 +564,10 @@ export default function ContributionTimeline({
       refreshInFlightRef.current = false;
     }
   }, [
+    applyFinalizationStatus,
     checkIsProjectAdmin,
+    checkIsAuthorized,
+    checkHasDisputed,
     fetchDisputeEvents,
     fetchFinalizationStatus,
     fetchHistory,
@@ -609,9 +578,7 @@ export default function ContributionTimeline({
   ]);
 
   // ---------------------------------------------------------------------------
-  // Initialisation effect — runs once per projectId change.
-  // Sequence: contributions first (renders quickly), then profiles + disputes
-  // in parallel, then start polling.
+  // Initialisation effect
   // ---------------------------------------------------------------------------
   useEffect(() => {
     setEntries([]);
@@ -637,16 +604,15 @@ export default function ContributionTimeline({
         const supportsAuthorized = await checkSupportsAuthorizedDispute(provider, contractAddress);
         setSupportsAuthorizedDispute(supportsAuthorized);
 
-        // ── Step 1: fetch contribution list (fast — one eth_call) ──────────
         const history = await fetchHistory(contract, provider, projectId, { includeTxHashes: false });
         if (!isMountedRef.current) return;
 
         prevCountRef.current = history.length;
         updateEntries(history);
         setLastRefreshed(new Date());
-        setLoading(false); // show entries immediately, before slower queries
+        setLoading(false);
 
-        // Fill tx hashes in the background so the initial render is not blocked
+        // Fill tx hashes in the background
         (async () => {
           try {
             const fullHistory = await fetchHistory(contract, provider, projectId, { includeTxHashes: true });
@@ -654,11 +620,10 @@ export default function ContributionTimeline({
             updateEntries(fullHistory);
             prevCountRef.current = fullHistory.length;
           } catch {
-            // ignore background fill failures
+            // ignore
           }
         })();
 
-        // ── Step 2: profiles + disputes + finalization in parallel ──────────
         const contributors = history.map(e => e.contributor);
 
         const [profileResult, disputes, finStatus, adminStatus, authorizedStatus, strikeStatus] = await Promise.allSettled([
@@ -680,7 +645,7 @@ export default function ContributionTimeline({
           mergeDisputedEntries(disputes.value);
         }
         if (finStatus.status === "fulfilled") {
-          setFinalizationStatus(finStatus.value);
+          applyFinalizationStatus(finStatus.value);
         }
         if (adminStatus.status === "fulfilled") {
           setIsProjectAdmin(adminStatus.value);
@@ -692,8 +657,6 @@ export default function ContributionTimeline({
           setHasUsedStrike(strikeStatus.value);
         }
 
-        // Start polling only after all initial data is loaded so the first
-        // poll doesn't race with dispute state.
         if (isMountedRef.current) setIsPolling(true);
 
       } catch (err) {
@@ -722,11 +685,9 @@ export default function ContributionTimeline({
   useEffect(() => {
     if (!refreshKey || refreshKey === 0) return;
     if (!contractRef.current || !providerRef.current) return;
-
     const t = setTimeout(() => {
       refreshData("Refresh failed.");
     }, 2500);
-
     return () => clearTimeout(t);
   }, [refreshKey, refreshData]);
 
@@ -765,12 +726,7 @@ export default function ContributionTimeline({
     } finally {
       setLoading(false);
     }
-  }, [
-    finalizationDays,
-    initiateProjectFinalization,
-    poll,
-    supportsEditableFinalizationWindow,
-  ]);
+  }, [finalizationDays, initiateProjectFinalization, poll, supportsEditableFinalizationWindow]);
 
   const getContributionHash = useCallback((contributor, timestamp) => {
     return buildContributionHash(projectId, contributor, timestamp);
@@ -805,7 +761,7 @@ export default function ContributionTimeline({
     } finally {
       setFlaggingDisputeKey(null);
     }
-  }, [getContributionHash, getWalletContract, mergeDisputedEntries, poll, projectId]);
+  }, [getContributionHash, getWalletContract, mergeDisputedEntries, poll, projectId, supportsAuthorizedDispute]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px", minWidth: 0 }}>
@@ -876,7 +832,7 @@ export default function ContributionTimeline({
               display: "flex",
               gap: "8px",
             }}>
-              <span>x</span>
+              <span>✕</span>
               <span style={{ lineHeight: 1.5 }}>{error}</span>
             </div>
           )}
