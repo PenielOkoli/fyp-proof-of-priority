@@ -1,0 +1,10 @@
+const { readFileSync } = require('fs');
+const { ethers } = require('ethers');
+const abi = JSON.parse(readFileSync('contracts/AcademicLedger.json', 'utf8')).abi;
+const iface = new ethers.Interface(abi);
+console.log(Object.getOwnPropertyNames(Object.getPrototypeOf(iface)).sort());
+console.log(Object.keys(iface).sort());
+console.log('has events property?', iface.events !== undefined);
+console.log('getEvent', typeof iface.getEvent);
+console.log('getEventTopic', typeof iface.getEventTopic);
+console.log('getEventNames', typeof iface.getEventNames);

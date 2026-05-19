@@ -15,12 +15,15 @@ export default function TimelineEntry({
   disputeReason,
   isProjectFinalized,
   isProjectAdmin,
+  canDispute,
+  hasUsedStrike,
   isFlagging,
   onFlagDispute,
 }) {
   const style = ROLE_STYLE[entry.role] ?? DEFAULT_STYLE;
   const d = new Date(Number(entry.timestamp) * 1000);
-  const dateUTC = d.toLocaleString("en-GB", {
+  const utcPlusOne = new Date(d.getTime() + 60 * 60 * 1000);
+  const dateUTC = utcPlusOne.toLocaleString("en-GB", {
     day: "2-digit",
     month: "long",
     year: "numeric",
@@ -29,7 +32,7 @@ export default function TimelineEntry({
     second: "2-digit",
     timeZone: "UTC",
     hour12: false,
-  }) + " UTC";
+  }) + " UTC+1";
 
   const [isHovered, setIsHovered] = useState(false);
   const [copiedType, setCopiedType] = useState(null);
@@ -167,7 +170,7 @@ export default function TimelineEntry({
                 </div>
               )}
 
-              {isProjectAdmin && !isDisputed && !showDisputeForm && (
+              {canDispute && !showDisputeForm && (
                 <button
                   type="button"
                   onClick={() => setShowDisputeForm(true)}
@@ -176,11 +179,16 @@ export default function TimelineEntry({
                   Flag Dispute
                 </button>
               )}
+              {hasUsedStrike && !isDisputed && !canDispute && (
+                <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "#7C3AED", margin: 0, lineHeight: 1.4, maxWidth: "280px" }}>
+                  You have already used your one-strike dispute for this project. Further disputes are disabled until the admin resolves arbitration.
+                </p>
+              )}
             </div>
           </div>
         </div>
 
-        {isProjectAdmin && !isDisputed && showDisputeForm && (
+        {canDispute && !isDisputed && showDisputeForm && (
           <DisputeForm
             entry={entry}
             reason={disputeDraft}

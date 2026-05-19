@@ -1,0 +1,10 @@
+const { readFileSync } = require('fs');
+const { ethers } = require('ethers');
+const abi = JSON.parse(readFileSync('contracts/AcademicLedger.json', 'utf8')).abi;
+const iface = new ethers.Interface(abi);
+const evt = iface.getEvent('ContributionLogged');
+console.log(evt);
+console.log(Object.keys(evt));
+console.log('topic', evt.topic);
+console.log('signature', evt.format('sighash'));
+console.log('name', evt.name);

@@ -16,10 +16,11 @@ import { getFriendlyError } from "@/utils/errorFormatter";
 function isValidAddress(addr) { return /^0x[0-9a-fA-F]{40}$/.test(addr); }
 function truncate(addr) { return addr ? `${addr.slice(0,6)}...${addr.slice(-4)}` : "—"; }
 
-export default function ManageCollaborators({ contractAddress, contractABI, projectId }) {
+export default function ManageCollaborators({ contractAddress, contractABI, projectId, isHalted = false, onResolved }) {
   const { address } = useWallet();
 
   const [isAdmin,        setIsAdmin]        = useState(false);
+  const [resolving,     setResolving]     = useState(false);
   const [checkingAdmin,  setCheckingAdmin]  = useState(true);
   const [adminAddress,   setAdminAddress]   = useState("");
 
@@ -189,6 +190,9 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
       }
       
       const toastId = toast.loading("Confirm in MetaMask…");
+      if (isHalted) {
+        throw new Error("Project halted: collaborator management disabled until arbitration is resolved.");
+      }
       const tx = await contract.authorizeCollaborator(projectId, collabAddr);
       toast.loading("Transaction pending…", { id: toastId });
       await tx.wait(1);
@@ -214,6 +218,9 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer   = await provider.getSigner();
+      if (isHalted) {
+        throw new Error("Project halted: owner transfer disabled until arbitration is resolved.");
+      }
       const contract = new ethers.Contract(contractAddress, contractABI, signer);
       const tx = await contract.transferProjectAdmin(projectId, transferAddr);
       toast.loading("Transferring ownership on-chain…", { id: toastId });
@@ -225,6 +232,29 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
       const msg = err?.code === 4001 ? "Rejected in MetaMask." : getFriendlyError(err, "Transaction failed.");
       toast.error(msg, { id: toastId });
     } finally { setTransferring(false); }
+  };
+
+  // ── Resolve dispute (ADMIN ONLY) ──────────────────────────────────────────
+  const handleResolveDispute = async () => {
+    if (!contractAddress || !contractABI || !projectId) return;
+    setResolving(true);
+    const toastId = toast.loading("Confirm in MetaMask…");
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const contract = new ethers.Contract(contractAddress, contractABI, signer);
+      const tx = await contract.resolveDispute(projectId);
+      toast.loading("Resolving dispute on-chain…", { id: toastId });
+      await tx.wait(1);
+      toast.success("Dispute resolved.", { id: toastId });
+      if (typeof onResolved === "function") onResolved();
+      await fetchRoster(adminAddress);
+    } catch (err) {
+      const msg = err?.code === 4001 ? "Rejected in MetaMask." : getFriendlyError(err, "Failed to resolve dispute.");
+      toast.error(msg, { id: toastId });
+    } finally {
+      setResolving(false);
+    }
   };
 
   // ── Loading / not admin states ────────────────────────────────────────────
@@ -275,6 +305,16 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
               &nbsp;·&nbsp; Admin: <span style={{ color:"var(--ink-2)" }}>{truncate(adminAddress)}</span>
             </p>
           </div>
+          {isHalted && (
+            <div style={{ border:"1px solid #FECACA", borderRadius:"8px", background:"#FEF2F2", padding:"16px", marginBottom:"18px" }}>
+              <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.95rem", color:"#991B1B", margin:0, fontWeight:700 }}>Arbitration Active: Collaborator changes are frozen.</p>
+              <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.9rem", color:"#991B1B", margin:"10px 0 0" }}>Only the project admin can resolve the dispute to restore write access.</p>
+              <button onClick={handleResolveDispute} disabled={resolving}
+                style={{ marginTop:"12px", padding:"10px 16px", borderRadius:"6px", border:"1px solid #991B1B", background: resolving ? "#FEE2E2" : "#991B1B", color: resolving ? "#991B1B" : "#fff", fontWeight:700, cursor: resolving ? "not-allowed" : "pointer" }}>
+                {resolving ? "Resolving dispute…" : "Resolve Dispute"}
+              </button>
+            </div>
+          )}
 
           {/* Authorize form */}
           <form onSubmit={handleAuthorize} style={{ display:"flex", flexDirection:"column", gap:"10px", marginBottom:"20px" }}>
@@ -285,13 +325,13 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
               <input
                 type="text" value={collabAddr}
                 onChange={e => { setCollabAddr(e.target.value); setCollabError(""); }}
-                disabled={authorizing}
+                disabled={authorizing || isHalted}
                 placeholder="0x0000000000000000000000000000000000000000"
                 spellCheck={false}
                 style={{ flex:1, padding:"9px 12px", borderRadius:"6px", border:`1px solid ${collabError ? "var(--danger)" : collabAddr && isValidAddress(collabAddr) ? "#A8D8BE" : "var(--rule)"}`, background:"var(--paper)", color:"var(--ink)", fontFamily:"var(--font-geist-mono)", fontSize:"12px", outline:"none" }}
               />
-              <button type="submit" disabled={authorizing || !!collabError || !collabAddr}
-                style={{ padding:"9px 16px", borderRadius:"6px", border:"none", background: authorizing || !collabAddr || collabError ? "var(--paper-3)" : "var(--warning)", color: authorizing || !collabAddr || collabError ? "var(--ink-4)" : "#fff", fontSize:"12px", fontWeight:600, cursor: authorizing || !collabAddr || collabError ? "not-allowed" : "pointer", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:"6px" }}>
+              <button type="submit" disabled={authorizing || !!collabError || !collabAddr || isHalted}
+                style={{ padding:"9px 16px", borderRadius:"6px", border:"none", background: authorizing || !collabAddr || collabError || isHalted ? "var(--paper-3)" : "var(--warning)", color: authorizing || !collabAddr || collabError || isHalted ? "var(--ink-4)" : "#fff", fontSize:"12px", fontWeight:600, cursor: authorizing || !collabAddr || collabError || isHalted ? "not-allowed" : "pointer", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:"6px" }}>
                 {authorizing ? (
                   <svg style={{ animation:"spin 1s linear infinite", width:"12px", height:"12px" }} fill="none" viewBox="0 0 24 24"><circle style={{ opacity:0.2 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/><path style={{ opacity:0.8 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                 ) : null}
@@ -336,12 +376,12 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
                   ⚠ Irreversible. You will lose admin rights immediately.
                 </p>
                 <form onSubmit={handleTransfer} style={{ display:"flex", flexDirection:"column", gap:"8px" }}>
-                  <input type="text" value={transferAddr} onChange={e => { setTransferAddr(e.target.value); setTransferError(""); }} disabled={transferring}
+                  <input type="text" value={transferAddr} onChange={e => { setTransferAddr(e.target.value); setTransferError(""); }} disabled={transferring || isHalted}
                     placeholder="New admin wallet address (0x...)" spellCheck={false}
                     style={{ width:"100%", padding:"9px 12px", borderRadius:"6px", border:`1px solid ${transferError ? "var(--danger)" : "var(--rule)"}`, background:"var(--paper)", color:"var(--ink)", fontFamily:"var(--font-geist-mono)", fontSize:"12px", outline:"none", boxSizing:"border-box" }} />
                   {transferError && <p style={{ fontSize:"11px", color:"var(--danger)", fontFamily:"var(--font-geist-mono)" }}>✕ {transferError}</p>}
-                  <button type="submit" disabled={transferring || !transferAddr}
-                    style={{ width:"100%", padding:"10px", borderRadius:"6px", border:"1px solid var(--danger)", background:"var(--paper)", color:"var(--danger)", fontSize:"12px", fontWeight:700, cursor: transferring || !transferAddr ? "not-allowed" : "pointer", opacity: transferring || !transferAddr ? 0.5 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:"8px" }}>
+                  <button type="submit" disabled={transferring || !transferAddr || isHalted}
+                    style={{ width:"100%", padding:"10px", borderRadius:"6px", border:"1px solid var(--danger)", background:"var(--paper)", color:"var(--danger)", fontSize:"12px", fontWeight:700, cursor: transferring || !transferAddr || isHalted ? "not-allowed" : "pointer", opacity: transferring || !transferAddr || isHalted ? 0.5 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:"8px" }}>
                     {transferring ? (
                       <svg style={{ animation:"spin 1s linear infinite", width:"12px", height:"12px" }} fill="none" viewBox="0 0 24 24"><circle style={{ opacity:0.2 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/><path style={{ opacity:0.8 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                     ) : null}

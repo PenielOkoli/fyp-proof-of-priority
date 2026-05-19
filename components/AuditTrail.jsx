@@ -12,11 +12,13 @@ function truncateAddress(addr) {
 }
 
 function formatTimestamp(unixSeconds) {
-  const date = new Date(Number(unixSeconds) * 1000);
+  const date = new Date(Number(unixSeconds) * 1000 + 60 * 60 * 1000);
   return date.toLocaleString("en-GB", {
     day: "2-digit", month: "short", year: "numeric",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-  });
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    timeZone: "UTC",
+    hour12: false,
+  }) + " UTC+1";
 }
 
 const ROLE_COLORS = {
@@ -134,7 +136,11 @@ export default function AuditTrail({ contractAddress, contractABI, projectId, re
                 </svg>
                 Refresh
               </button>
-              {lastRefreshed && <p className="text-[8px] md:text-[10px] text-[#333]">Last fetched {lastRefreshed.toLocaleTimeString()}</p>}
+              {lastRefreshed && (
+                <p className="text-[8px] md:text-[10px] text-[#333]">
+                  Last fetched {new Date(lastRefreshed.getTime() + 60 * 60 * 1000).toLocaleTimeString("en-GB", { hour12: false })} UTC+1
+                </p>
+              )}
             </div>
           </div>
 

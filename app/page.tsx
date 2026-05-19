@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { ethers } from "ethers";
 import { useWallet } from "@/context/WalletContext";
 import WalletBar from "@/components/WalletBar";
 import ProjectSelector from "@/components/ProjectSelector";
@@ -16,7 +17,42 @@ export default function ProjectPage() {
   const { isConnected, isSepolia, needsProfile } = useWallet();
   const [projectId,  setProjectId]  = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [isHalted, setIsHalted] = useState(false);
+  const [haltStateSupported, setHaltStateSupported] = useState(true);
   const isReady = isConnected && isSepolia;
+
+  const fetchHaltState = useCallback(async () => {
+    if (!projectId) {
+      setIsHalted(false);
+      setHaltStateSupported(true);
+      return;
+    }
+
+    try {
+      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, AcademicLedgerABI.abi, provider);
+      const halted = await contract.isDisputed(projectId);
+      setIsHalted(Boolean(halted));
+      setHaltStateSupported(true);
+    } catch (err) {
+      const error = err as any;
+      // Some deployed contract versions may not yet expose project-level
+      // arbitration state. In that case, keep the UI usable and continue.
+      if (error?.code === "CALL_EXCEPTION" && typeof error?.message === "string" && error.message.includes("missing revert data")) {
+        console.warn("Project-level halt state unavailable on deployed contract version.");
+        setIsHalted(false);
+        setHaltStateSupported(false);
+        return;
+      }
+      console.error("Failed to fetch project halt state:", err);
+      setIsHalted(false);
+      setHaltStateSupported(true);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    fetchHaltState();
+  }, [projectId, fetchHaltState, refreshKey]);
 
   return (
     <div style={{ minHeight:"100vh", background:"var(--paper)", color:"var(--ink)" }}>
@@ -85,16 +121,31 @@ export default function ProjectPage() {
               <>
                 <div style={{ display:"grid", gridTemplateColumns:"420px 1fr", gap:"28px", alignItems:"start" }}>
                   <div style={{ display:"flex", flexDirection:"column", gap:"20px" }}>
+                    {!haltStateSupported && projectId && (
+                      <div style={{ border:"1px solid #FBBF24", borderRadius:"10px", background:"#FEF3C7", color:"#92400E", padding:"16px", lineHeight:1.6 }}>
+                        <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.95rem", margin:0, fontWeight:600 }}>Compatibility notice: This deployed contract version does not support project-level arbitration freeze.</p>
+                        <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.9rem", margin:"8px 0 0" }}>Contributions and collaborator management remain enabled until the contract is upgraded to the latest AcademicLedger implementation.</p>
+                      </div>
+                    )}
+                    {haltStateSupported && isHalted && (
+                      <div style={{ border:"1px solid #FCA5A5", borderRadius:"10px", background:"#FEE2E2", color:"#991B1B", padding:"16px", lineHeight:1.6 }}>
+                        <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.95rem", margin:0, fontWeight:600 }}>Project Halted: Currently under institutional arbitration.</p>
+                        <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.9rem", margin:"8px 0 0" }}>Contributions are frozen and collaborator management is disabled until arbitration is resolved.</p>
+                      </div>
+                    )}
                     <LogContributionForm
                       contractAddress={CONTRACT_ADDRESS}
                       contractABI={AcademicLedgerABI.abi}
                       projectId={projectId}
+                      isHalted={isHalted}
                       onSuccess={() => setRefreshKey(k => k + 1)}
                     />
                     <ManageCollaborators
                       contractAddress={CONTRACT_ADDRESS}
                       contractABI={AcademicLedgerABI.abi}
                       projectId={projectId}
+                      isHalted={isHalted}
+                      onResolved={fetchHaltState}
                     />
                   </div>
                   <ContributionTimeline

@@ -24,13 +24,36 @@ import { getContributionHash as buildContributionHash } from "./contribution-tim
 // Uses large chunks (2000 blocks) so a typical Sepolia deployment only needs
 // a handful of RPC calls instead of hundreds.
 // ---------------------------------------------------------------------------
-async function fetchLogsInRanges(contract, filter, fromBlock, toBlock) {
+async function fetchLogsInRanges(provider, contract, filter, fromBlock, toBlock) {
+  const contractAddress = contract.target ?? contract.address;
+  const filterParams = {
+    address: contractAddress,
+    topics: filter?.topics,
+  };
+
+  async function parseRawLogs(rawLogs) {
+    return rawLogs.map(log => {
+      const parsed = contract.interface.parseLog(log);
+      return {
+        ...log,
+        ...parsed,
+      };
+    });
+  }
+
   async function queryRange(start, end, chunkSize) {
     if (start > end) return [];
     try {
       return await contract.queryFilter(filter, start, end);
     } catch (err) {
-      if (chunkSize <= MIN_EVENT_QUERY_CHUNK_SIZE) throw err;
+      if (chunkSize <= MIN_EVENT_QUERY_CHUNK_SIZE) {
+        const rawLogs = await provider.getLogs({
+          ...filterParams,
+          fromBlock: start,
+          toBlock: end,
+        });
+        return await parseRawLogs(rawLogs);
+      }
       const nextSize = Math.max(MIN_EVENT_QUERY_CHUNK_SIZE, Math.floor(chunkSize / 2));
       const boundary = Math.min(start + nextSize - 1, end);
       const left = await queryRange(start, boundary, nextSize);
@@ -46,6 +69,12 @@ async function fetchLogsInRanges(contract, filter, fromBlock, toBlock) {
     if (logs.length > 0) allLogs = allLogs.concat(logs);
   }
   return allLogs;
+}
+
+function matchesIndexedProjectId(log, projectId) {
+  if (!log || !log.topics) return false;
+  const projectIdTopic = ethers.id(projectId);
+  return log.topics[1] === projectIdTopic || log.args?.projectId === projectId;
 }
 
 export default function ContributionTimeline({
@@ -65,6 +94,9 @@ export default function ContributionTimeline({
   const [disputedEntries, setDisputedEntries] = useState({});
   const [finalizationStatus, setFinalizationStatus] = useState(null);
   const [isProjectAdmin, setIsProjectAdmin] = useState(false);
+  const [isProjectAuthorized, setIsProjectAuthorized] = useState(false);
+  const [hasUsedStrike, setHasUsedStrike] = useState(false);
+  const [supportsAuthorizedDispute, setSupportsAuthorizedDispute] = useState(true);
   const [finalizationDays, setFinalizationDays] = useState(DEFAULT_FINALIZATION_DAYS);
   const [flaggingDisputeKey, setFlaggingDisputeKey] = useState(null);
 
@@ -167,6 +199,7 @@ export default function ContributionTimeline({
             );
           } catch {
             allLogs = await fetchLogsInRanges(
+              contract.provider,
               contract,
               contract.filters.ContributionDisputed(),
               fromBlock,
@@ -175,7 +208,7 @@ export default function ContributionTimeline({
           }
 
           allLogs
-            .filter(log => log.args.projectId === projId)
+            .filter(log => matchesIndexedProjectId(log, projId))
             .forEach(log => {
               const hash = log.args.contributionHash;
               const reason = typeof log.args.reason === "string" ? log.args.reason : "";
@@ -229,13 +262,51 @@ export default function ContributionTimeline({
     }
   }, []);
 
+  const getWalletAddress = useCallback(async () => {
+    if (typeof window === "undefined" || !window.ethereum) {
+      throw new Error("MetaMask not found.");
+    }
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const signer = await provider.getSigner();
+    return await signer.getAddress();
+  }, []);
+
   const checkIsProjectAdmin = useCallback(async (contract, projId) => {
     try {
-      if (typeof window === "undefined" || !window.ethereum) return false;
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      const userAddress = await signer.getAddress();
+      const userAddress = await getWalletAddress();
       return await contract.isProjectAdmin(projId, userAddress);
+    } catch {
+      return false;
+    }
+  }, [getWalletAddress]);
+
+  const checkIsAuthorized = useCallback(async (contract, projId) => {
+    try {
+      const userAddress = await getWalletAddress();
+      if (await contract.isProjectAdmin(projId, userAddress)) {
+        return true;
+      }
+      return await contract.isAuthorized(projId, userAddress);
+    } catch {
+      return false;
+    }
+  }, [getWalletAddress]);
+
+  const checkHasDisputed = useCallback(async (contract, projId) => {
+    try {
+      const userAddress = await getWalletAddress();
+      if (typeof contract.hasDisputed !== "function") return false;
+      return await contract.hasDisputed(projId, userAddress);
+    } catch {
+      return false;
+    }
+  }, [getWalletAddress]);
+
+  const checkSupportsAuthorizedDispute = useCallback(async (provider, contractAddr) => {
+    try {
+      const code = await provider.getCode(contractAddr);
+      const selector = ethers.id("disputeContribution(string,address,uint256,string)").slice(2, 10);
+      return code.includes(selector);
     } catch {
       return false;
     }
@@ -264,7 +335,7 @@ export default function ContributionTimeline({
   // fetchHistory — prefers getContributions() (one RPC call) for the entry
   // list, then does a single event query to attach tx hashes.
   // ---------------------------------------------------------------------------
-  const fetchHistory = useCallback(async (contract, provider, projId) => {
+  const fetchHistory = useCallback(async (contract, provider, projId, { includeTxHashes = true } = {}) => {
     let storedEntries = [];
 
     try {
@@ -307,7 +378,7 @@ export default function ContributionTimeline({
       );
     };
 
-    if (eventQueriesDisabledRef.current) {
+    if (!includeTxHashes || eventQueriesDisabledRef.current) {
       return storedEntries.map(entry => ({ ...entry, txHash: restoreTxHash(entry) }));
     }
 
@@ -322,17 +393,25 @@ export default function ContributionTimeline({
       const currentBlock = await provider.getBlockNumber();
       const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 10823551);
       const fromBlock = Math.max(deployBlock, 0);
+
       const primaryFilter = contract.filters.ContributionLogged(projId);
-      let allLogs = await fetchLogsInRanges(contract, primaryFilter, fromBlock, currentBlock);
+      let allLogs = await fetchLogsInRanges(
+        provider,
+        contract,
+        primaryFilter,
+        fromBlock,
+        currentBlock
+      );
 
       if (allLogs.length === 0 && storedEntries.length > 0) {
         const fallbackLogs = await fetchLogsInRanges(
+          provider,
           contract,
           contract.filters.ContributionLogged(),
           fromBlock,
           currentBlock
         );
-        allLogs = fallbackLogs.filter(log => log.args.projectId === projId);
+        allLogs = fallbackLogs.filter(log => matchesIndexedProjectId(log, projId));
       }
 
       const txByKey = new Map(
@@ -389,7 +468,7 @@ export default function ContributionTimeline({
 
     pollInFlightRef.current = true;
     try {
-      const history = await fetchHistory(contractRef.current, providerRef.current, projectId);
+      const history = await fetchHistory(contractRef.current, providerRef.current, projectId, { includeTxHashes: false });
       const prevCount = prevCountRef.current;
 
       if (history.length > prevCount && prevCount > 0) {
@@ -443,8 +522,17 @@ export default function ContributionTimeline({
       const finStatus = await fetchFinalizationStatus(contractRef.current, projectId);
       if (isMountedRef.current) setFinalizationStatus(finStatus);
 
-      const adminStatus = await checkIsProjectAdmin(contractRef.current, projectId);
-      if (isMountedRef.current) setIsProjectAdmin(adminStatus);
+      const [adminStatus, authorizedStatus, strikeStatus] = await Promise.all([
+        checkIsProjectAdmin(contractRef.current, projectId),
+        checkIsAuthorized(contractRef.current, projectId),
+        checkHasDisputed(contractRef.current, projectId),
+      ]);
+
+      if (isMountedRef.current) {
+        setIsProjectAdmin(adminStatus);
+        setIsProjectAuthorized(authorizedStatus);
+        setHasUsedStrike(strikeStatus);
+      }
     } catch { }
     finally {
       pollInFlightRef.current = false;
@@ -472,7 +560,7 @@ export default function ContributionTimeline({
     refreshInFlightRef.current = true;
     setLoading(true);
     try {
-      const h = await fetchHistory(contractRef.current, providerRef.current, projectId);
+      const h = await fetchHistory(contractRef.current, providerRef.current, projectId, { includeTxHashes: false });
       if (!h) return;
 
       prevCountRef.current = h.length;
@@ -493,8 +581,16 @@ export default function ContributionTimeline({
       const finStatus = await fetchFinalizationStatus(contractRef.current, projectId);
       if (isMountedRef.current) setFinalizationStatus(finStatus);
 
-      const adminStatus = await checkIsProjectAdmin(contractRef.current, projectId);
-      if (isMountedRef.current) setIsProjectAdmin(adminStatus);
+      const [adminStatus, authorizedStatus, strikeStatus] = await Promise.all([
+        checkIsProjectAdmin(contractRef.current, projectId),
+        checkIsAuthorized(contractRef.current, projectId),
+        checkHasDisputed(contractRef.current, projectId),
+      ]);
+      if (isMountedRef.current) {
+        setIsProjectAdmin(adminStatus);
+        setIsProjectAuthorized(authorizedStatus);
+        setHasUsedStrike(strikeStatus);
+      }
     } catch (err) {
       setError(getFriendlyError(err, fallbackMessage));
       setLoading(false);
@@ -538,9 +634,11 @@ export default function ContributionTimeline({
 
         const contract = new ethers.Contract(contractAddress, JSON.parse(abiString), provider);
         contractRef.current = contract;
+        const supportsAuthorized = await checkSupportsAuthorizedDispute(provider, contractAddress);
+        setSupportsAuthorizedDispute(supportsAuthorized);
 
         // ── Step 1: fetch contribution list (fast — one eth_call) ──────────
-        const history = await fetchHistory(contract, provider, projectId);
+        const history = await fetchHistory(contract, provider, projectId, { includeTxHashes: false });
         if (!isMountedRef.current) return;
 
         prevCountRef.current = history.length;
@@ -548,14 +646,28 @@ export default function ContributionTimeline({
         setLastRefreshed(new Date());
         setLoading(false); // show entries immediately, before slower queries
 
+        // Fill tx hashes in the background so the initial render is not blocked
+        (async () => {
+          try {
+            const fullHistory = await fetchHistory(contract, provider, projectId, { includeTxHashes: true });
+            if (!isMountedRef.current) return;
+            updateEntries(fullHistory);
+            prevCountRef.current = fullHistory.length;
+          } catch {
+            // ignore background fill failures
+          }
+        })();
+
         // ── Step 2: profiles + disputes + finalization in parallel ──────────
         const contributors = history.map(e => e.contributor);
 
-        const [profileResult, disputes, finStatus, adminStatus] = await Promise.allSettled([
+        const [profileResult, disputes, finStatus, adminStatus, authorizedStatus, strikeStatus] = await Promise.allSettled([
           resolveProfiles(contributors, contract),
           fetchDisputeEvents(contract, projectId, history),
           fetchFinalizationStatus(contract, projectId),
           checkIsProjectAdmin(contract, projectId),
+          checkIsAuthorized(contract, projectId),
+          checkHasDisputed(contract, projectId),
         ]);
 
         if (!isMountedRef.current) return;
@@ -572,6 +684,12 @@ export default function ContributionTimeline({
         }
         if (adminStatus.status === "fulfilled") {
           setIsProjectAdmin(adminStatus.value);
+        }
+        if (authorizedStatus.status === "fulfilled") {
+          setIsProjectAuthorized(authorizedStatus.value);
+        }
+        if (strikeStatus.status === "fulfilled") {
+          setHasUsedStrike(strikeStatus.value);
         }
 
         // Start polling only after all initial data is loaded so the first
@@ -669,16 +787,15 @@ export default function ContributionTimeline({
     setFlaggingDisputeKey(key);
     try {
       const contract = await getWalletContract();
-      const tx = await contract.flagContributionAsDisputed(
-        projectId,
-        entry.contributor,
-        entry.timestamp,
-        cleanReason
+      const tx = await (supportsAuthorizedDispute && typeof contract.disputeContribution === "function"
+        ? contract.disputeContribution(projectId, entry.contributor, entry.timestamp, cleanReason)
+        : contract.flagContributionAsDisputed(projectId, entry.contributor, entry.timestamp, cleanReason)
       );
       await tx.wait();
 
       const hash = getContributionHash(entry.contributor, entry.timestamp);
       mergeDisputedEntries({ [hash]: cleanReason });
+      setHasUsedStrike(true);
       toast.success("Contribution flagged as disputed.");
       setTimeout(() => poll(), 1000);
       return true;
@@ -764,6 +881,20 @@ export default function ContributionTimeline({
             </div>
           )}
 
+          {!supportsAuthorizedDispute && (
+            <div style={{
+              background: "#FFF7ED",
+              border: "1px solid #FBBF24",
+              color: "#92400E",
+              borderRadius: "6px",
+              padding: "12px 14px",
+              fontSize: "12px",
+              marginBottom: "12px",
+            }}>
+              This deployed contract version does not yet support authorized collaborator disputes. Only project admins can flag disputes until the contract is upgraded.
+            </div>
+          )}
+
           {loading && entries.length === 0 && <TimelineSkeleton />}
           {!loading && !error && entries.length === 0 && <EmptyLedgerState />}
 
@@ -774,6 +905,10 @@ export default function ContributionTimeline({
                 const hash = getContributionHash(entry.contributor, entry.timestamp);
                 const isDisputed = Object.prototype.hasOwnProperty.call(disputedEntries, hash);
                 const disputeReason = disputedEntries[hash] || null;
+                const canDispute = !isDisputed
+                  && !finalizationStatus?.isFinalized
+                  && !hasUsedStrike
+                  && (isProjectAdmin || (supportsAuthorizedDispute && isProjectAuthorized));
 
                 return (
                   <TimelineEntry
@@ -785,6 +920,8 @@ export default function ContributionTimeline({
                     disputeReason={disputeReason}
                     isProjectFinalized={finalizationStatus?.isFinalized}
                     isProjectAdmin={isProjectAdmin}
+                    canDispute={canDispute}
+                    hasUsedStrike={hasUsedStrike}
                     isFlagging={flaggingDisputeKey === key}
                     onFlagDispute={handleFlagDispute}
                   />

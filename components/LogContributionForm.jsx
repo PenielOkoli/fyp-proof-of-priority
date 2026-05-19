@@ -34,7 +34,7 @@ const PHASE_LABEL = {
 
 function truncate(addr) { return addr ? `${addr.slice(0,6)}...${addr.slice(-4)}` : ""; }
 
-export default function LogContributionForm({ contractAddress, contractABI, projectId, onSuccess }) {
+export default function LogContributionForm({ contractAddress, contractABI, projectId, onSuccess, isHalted = false }) {
   const { address } = useWallet();
   const [file,     setFile]     = useState(null);
   const [role,     setRole]     = useState("Conceptualization");
@@ -48,8 +48,9 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
 
   const handleDrop = useCallback((e) => {
     e.preventDefault(); setDragging(false);
+    if (isHalted) return;
     const f = e.dataTransfer.files?.[0]; if (f) setFile(f);
-  }, []);
+  }, [isHalted]);
 
   const resetForm = () => {
     setFile(null); setRole("Conceptualization"); setPhase(PHASE.IDLE);
@@ -62,6 +63,12 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
     if (!contractAddress) return setErrorMsg("Contract address is not configured.");
     if (!contractABI)     return setErrorMsg("Contract ABI is not configured.");
     if (!projectId)       return setErrorMsg("No project selected.");
+    if (isHalted) {
+      const haltMsg = "Project halted: contributions are frozen under arbitration.";
+      setErrorMsg(haltMsg);
+      toast.error(haltMsg);
+      return;
+    }
 
     // ── PRE-FLIGHT: Check authorization BEFORE uploading to IPFS ───────────
     // This is the critical guard. A read-only call costs zero gas and
@@ -174,9 +181,9 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
           {/* File */}
           <div>
             <label style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", textTransform:"uppercase", letterSpacing:"0.15em", display:"block", marginBottom:"6px" }}>Research Artifact</label>
-            <input type="file" onChange={e => { const f=e.target.files?.[0]; if(f) setFile(f); }} disabled={isBusy} accept="*/*"
+            <input type="file" onChange={e => { const f=e.target.files?.[0]; if(f) setFile(f); }} disabled={isBusy || isHalted} accept="*/*"
               style={{ display:"block", width:"100%", color:"var(--ink-3)", fontFamily:"var(--font-geist-mono)", fontSize:"12px" }} />
-            <div onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={handleDrop}
+            <div onDragOver={e=>{e.preventDefault();if(!isHalted)setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={handleDrop}
               style={{ marginTop:"8px", height:"46px", border:`1px dashed ${dragging?"var(--accent)":"var(--rule)"}`, borderRadius:"6px", background:dragging?"var(--accent-bg)":"var(--paper-2)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:file?"var(--accent)":"var(--ink-4)", transition:"all 0.15s" }}>
               {file ? `\u2713  ${file.name}  (${(file.size/1024).toFixed(1)} KB)` : "or drag & drop here"}
             </div>
@@ -185,7 +192,7 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
           {/* Role */}
           <div>
             <label htmlFor="credit-role" style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", textTransform:"uppercase", letterSpacing:"0.15em", display:"block", marginBottom:"6px" }}>CRediT Taxonomy Role</label>
-            <select id="credit-role" value={role} onChange={e=>setRole(e.target.value)} disabled={isBusy}
+            <select id="credit-role" value={role} onChange={e=>setRole(e.target.value)} disabled={isBusy || isHalted}
               style={{ width:"100%", padding:"9px 32px 9px 12px", borderRadius:"6px", border:"1px solid var(--rule)", background:"var(--paper)", color:"var(--ink)", fontFamily:"var(--font-geist-mono)", fontSize:"12px", appearance:"none", backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239A9A90' stroke-width='2'%3E%3Cpath d='M19 9l-7 7-7-7'/%3E%3C/svg%3E")`, backgroundRepeat:"no-repeat", backgroundPosition:"right 12px center" }}>
               {CREDIT_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
@@ -211,9 +218,9 @@ export default function LogContributionForm({ contractAddress, contractABI, proj
           )}
 
           {/* Submit */}
-          <button type="submit" disabled={isBusy}
-            style={{ width:"100%", padding:"12px", borderRadius:"6px", border:"none", background:isBusy?"var(--paper-3)":"var(--accent)", color:isBusy?"var(--ink-4)":"#fff", fontSize:"13px", fontWeight:600, letterSpacing:"0.04em", cursor:isBusy?"not-allowed":"pointer", pointerEvents:isBusy?"none":"auto", transition:"background 0.2s" }}>
-            {isBusy ? PHASE_LABEL[phase] : "Upload & Log Contribution"}
+          <button type="submit" disabled={isBusy || isHalted}
+            style={{ width:"100%", padding:"12px", borderRadius:"6px", border:"none", background:isBusy||isHalted?"var(--paper-3)":"var(--accent)", color:isBusy||isHalted?"var(--ink-4)":"#fff", fontSize:"13px", fontWeight:600, letterSpacing:"0.04em", cursor:isBusy||isHalted?"not-allowed":"pointer", pointerEvents:isBusy||isHalted?"none":"auto", transition:"background 0.2s" }}>
+            {isHalted ? "Project Halted — Contributions Frozen" : isBusy ? PHASE_LABEL[phase] : "Upload & Log Contribution"}
           </button>
 
           <p style={{ textAlign:"center", fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", lineHeight:1.6 }}>

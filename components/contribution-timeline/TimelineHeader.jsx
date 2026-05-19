@@ -114,22 +114,31 @@ export default function TimelineHeader({
         {isProjectAdmin && !finalizationStatus?.isFinalizationActive && !isFinalized && (
           <div style={{
             display: "flex",
-            alignItems: "center",
-            gap: "8px",
             flexWrap: "wrap",
+            alignItems: "center",
+            gap: "10px",
             justifyContent: "flex-end",
-            maxWidth: "360px",
+            maxWidth: "420px",
           }}>
-            <label htmlFor="finalization-days" style={{
-              fontFamily: "var(--font-geist-mono)",
-              fontSize: "9px",
-              color: "var(--ink-4)",
-              textTransform: "uppercase",
-              letterSpacing: "0.12em",
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "8px 10px",
+              borderRadius: "8px",
+              border: "1px solid var(--rule)",
+              background: "var(--paper-2)",
             }}>
-              Review Window
-            </label>
-            <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+              <label htmlFor="finalization-days" style={{
+                fontFamily: "var(--font-geist-mono)",
+                fontSize: "9px",
+                color: "var(--ink-4)",
+                textTransform: "uppercase",
+                letterSpacing: "0.14em",
+                margin: 0,
+              }}>
+                Review Window
+              </label>
               <input
                 id="finalization-days"
                 type="number"
@@ -145,13 +154,13 @@ export default function TimelineHeader({
                 title={supportsEditableFinalizationWindow ? "Set countdown length before sealing" : "Current deployed contract uses its built-in countdown"}
                 style={{
                   width: "52px",
-                  height: "30px",
-                  borderRadius: "4px",
+                  height: "34px",
+                  borderRadius: "6px",
                   border: "1px solid var(--rule)",
-                  background: supportsEditableFinalizationWindow ? "var(--paper)" : "var(--paper-2)",
+                  background: supportsEditableFinalizationWindow ? "#fff" : "var(--paper)",
                   color: supportsEditableFinalizationWindow ? "var(--ink)" : "var(--ink-4)",
                   fontFamily: "var(--font-geist-mono)",
-                  fontSize: "11px",
+                  fontSize: "12px",
                   textAlign: "center",
                   cursor: supportsEditableFinalizationWindow ? "text" : "not-allowed",
                 }}
@@ -166,21 +175,18 @@ export default function TimelineHeader({
               style={{
                 fontFamily: "var(--font-geist-mono)",
                 fontSize: "10px",
-                fontWeight: "700",
+                fontWeight: 700,
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
                 background: "var(--accent)",
                 color: "#fff",
                 border: "1px solid var(--accent)",
-                padding: "8px 12px",
-                borderRadius: "4px",
+                padding: "10px 16px",
+                borderRadius: "8px",
                 cursor: loading ? "not-allowed" : "pointer",
-                opacity: loading ? 0.6 : 1,
-                transition: "all 0.2s",
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-                boxShadow: "0 1px 2px rgba(45, 106, 79, 0.18)",
+                opacity: loading ? 0.7 : 1,
+                transition: "background 0.2s ease, transform 0.2s ease",
               }}
-              onMouseOver={e => !loading && (e.target.style.background = "#245B43")}
-              onMouseOut={e => (e.target.style.background = "var(--accent)")}
               title={supportsEditableFinalizationWindow ? `Start ${finalizationDays}-day finalization countdown` : "Start the contract's configured finalization countdown"}
             >
               Initiate Finalization
