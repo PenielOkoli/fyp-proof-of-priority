@@ -24,7 +24,7 @@ export default function ProjectPage() {
 
   // Use !! instead of === true so truthy values from ethers (BigInt, "true", 1) are handled correctly
   const isFinalizationActive =
-    !!finalizationStatus?.isActive && !finalizationStatus?.isFinalized;
+    !!finalizationStatus?.isFinalizationActive && !finalizationStatus?.isFinalized;
 
   const fetchHaltState = useCallback(async () => {
     if (!projectId) {
@@ -40,12 +40,20 @@ export default function ProjectPage() {
       const halted = await contract.isDisputed(projectId);
       setIsHalted(Boolean(halted));
       setHaltStateSupported(true);
+
+      try {
+        const finStatus = await contract.getFinalizationStatus(projectId);
+        setFinalizationStatus(finStatus);
+      } catch {
+        setFinalizationStatus(null);
+      }
     } catch (err) {
       const error = err as any;
       if (error?.code === "CALL_EXCEPTION" && typeof error?.message === "string" && error.message.includes("missing revert data")) {
         console.warn("Project-level halt state unavailable on deployed contract version.");
         setIsHalted(false);
         setHaltStateSupported(false);
+        setFinalizationStatus(null);
         return;
       }
       console.error("Failed to fetch project halt state:", err);
