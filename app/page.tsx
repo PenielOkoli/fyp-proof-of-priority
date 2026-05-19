@@ -19,13 +19,18 @@ export default function ProjectPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [isHalted, setIsHalted] = useState(false);
   const [haltStateSupported, setHaltStateSupported] = useState(true);
+  const [finalizationStatus, setFinalizationStatus] = useState<any>(null);
   const isReady = isConnected && isSepolia;
+
+  // Use !! instead of === true so truthy values from ethers (BigInt, "true", 1) are handled correctly
+  const isFinalizationActive =
+    !!finalizationStatus?.isActive && !finalizationStatus?.isFinalized;
 
   const fetchHaltState = useCallback(async () => {
     if (!projectId) {
       setIsHalted(false);
       setHaltStateSupported(true);
-      setFinalizationStatus(null); 
+      setFinalizationStatus(null);
       return;
     }
 
@@ -37,8 +42,6 @@ export default function ProjectPage() {
       setHaltStateSupported(true);
     } catch (err) {
       const error = err as any;
-      // Some deployed contract versions may not yet expose project-level
-      // arbitration state. In that case, keep the UI usable and continue.
       if (error?.code === "CALL_EXCEPTION" && typeof error?.message === "string" && error.message.includes("missing revert data")) {
         console.warn("Project-level halt state unavailable on deployed contract version.");
         setIsHalted(false);
@@ -50,11 +53,6 @@ export default function ProjectPage() {
       setHaltStateSupported(true);
     }
   }, [projectId]);
-
-  const [finalizationStatus, setFinalizationStatus] = useState<any>(null);
-
-  const isFinalizationActive =
-    finalizationStatus?.isActive === true && !finalizationStatus?.isFinalized;
 
   useEffect(() => {
     fetchHaltState();
@@ -161,7 +159,7 @@ export default function ProjectPage() {
                     projectId={projectId}
                     readOnlyRpcUrl={RPC_URL}
                     refreshKey={refreshKey}
-                    onFinalizationStatusChange={setFinalizationStatus} 
+                    onFinalizationStatusChange={setFinalizationStatus}
                   />
                 </div>
                 <footer style={{ borderTop:"1px solid var(--rule)", paddingTop:"16px", marginTop:"40px", textAlign:"center", fontFamily:"var(--font-geist-mono)", fontSize:"11px", color:"var(--ink-4)" }}>
