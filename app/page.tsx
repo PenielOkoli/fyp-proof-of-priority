@@ -12,23 +12,55 @@ import AcademicLedgerABI from "@/contracts/AcademicLedger.json";
 
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS!;
 const RPC_URL          = process.env.NEXT_PUBLIC_RPC_URL!;
+const DISPUTE_REASON_ABI = [
+  "function projectDisputeReasons(string) view returns (string)",
+  "function getProjectDisputeReason(string) view returns (string)",
+];
+
+type ConfirmedContribution = {
+  txHash: string;
+  cid: string;
+  contributor: string;
+  blockNumber: number | null;
+};
+
+type FinalizationStatus = {
+  isFinalizationActive?: boolean;
+  finalizationDeadline?: bigint | number;
+  isFinalized?: boolean;
+} | null;
+
+type RpcError = {
+  code?: string;
+  message?: string;
+};
 
 export default function ProjectPage() {
   const { isConnected, isSepolia, needsProfile } = useWallet();
   const [projectId,  setProjectId]  = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [confirmedContribution, setConfirmedContribution] = useState<ConfirmedContribution | null>(null);
   const [isHalted, setIsHalted] = useState(false);
+  const [projectDisputeReason, setProjectDisputeReason] = useState("");
   const [haltStateSupported, setHaltStateSupported] = useState(true);
-  const [finalizationStatus, setFinalizationStatus] = useState<any>(null);
+  const [finalizationStatus, setFinalizationStatus] = useState<FinalizationStatus>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const isReady = isConnected && isSepolia;
 
   // Use !! instead of === true so truthy values from ethers (BigInt, "true", 1) are handled correctly
   const isFinalizationActive =
     !!finalizationStatus?.isFinalizationActive && !finalizationStatus?.isFinalized;
+  const finalizationDeadlinePassed = Boolean(
+    finalizationStatus?.isFinalizationActive
+    && finalizationStatus?.finalizationDeadline
+    && Number(finalizationStatus.finalizationDeadline) * 1000 <= nowMs
+  );
+  const isProjectImmutable = Boolean(finalizationStatus?.isFinalized || finalizationDeadlinePassed);
 
   const fetchHaltState = useCallback(async () => {
     if (!projectId) {
       setIsHalted(false);
+      setProjectDisputeReason("");
       setHaltStateSupported(true);
       setFinalizationStatus(null);
       return;
@@ -40,6 +72,22 @@ export default function ProjectPage() {
       const halted = await contract.isDisputed(projectId);
       setIsHalted(Boolean(halted));
       setHaltStateSupported(true);
+      if (halted) {
+        const reasonContract = new ethers.Contract(CONTRACT_ADDRESS, DISPUTE_REASON_ABI, provider);
+        let reason = "";
+        try {
+          reason = await reasonContract.projectDisputeReasons(projectId);
+        } catch {
+          try {
+            reason = await reasonContract.getProjectDisputeReason(projectId);
+          } catch {
+            reason = "";
+          }
+        }
+        setProjectDisputeReason(reason);
+      } else {
+        setProjectDisputeReason("");
+      }
 
       try {
         const finStatus = await contract.getFinalizationStatus(projectId);
@@ -48,23 +96,31 @@ export default function ProjectPage() {
         setFinalizationStatus(null);
       }
     } catch (err) {
-      const error = err as any;
+      const error = err as RpcError;
       if (error?.code === "CALL_EXCEPTION" && typeof error?.message === "string" && error.message.includes("missing revert data")) {
         console.warn("Project-level halt state unavailable on deployed contract version.");
         setIsHalted(false);
+        setProjectDisputeReason("");
         setHaltStateSupported(false);
         setFinalizationStatus(null);
         return;
       }
       console.error("Failed to fetch project halt state:", err);
       setIsHalted(false);
+      setProjectDisputeReason("");
       setHaltStateSupported(true);
     }
   }, [projectId]);
 
   useEffect(() => {
-    fetchHaltState();
+    const timer = setTimeout(fetchHaltState, 0);
+    return () => clearTimeout(timer);
   }, [projectId, fetchHaltState, refreshKey]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   return (
     <div style={{ minHeight:"100vh", background:"var(--paper)", color:"var(--ink)" }}>
@@ -131,42 +187,56 @@ export default function ProjectPage() {
               </div>
             ) : (
               <>
-                <div style={{ display:"grid", gridTemplateColumns:"420px 1fr", gap:"28px", alignItems:"start" }}>
-                  <div style={{ display:"flex", flexDirection:"column", gap:"20px" }}>
-                    {!haltStateSupported && projectId && (
+                <div style={{ display:"grid", gridTemplateColumns: isProjectImmutable ? "1fr" : "420px 1fr", gap:"28px", alignItems:"start" }}>
+                  {!isProjectImmutable && (
+                    <div style={{ display:"flex", flexDirection:"column", gap:"20px" }}>
+                      {!haltStateSupported && projectId && (
                       <div style={{ border:"1px solid #FBBF24", borderRadius:"10px", background:"#FEF3C7", color:"#92400E", padding:"16px", lineHeight:1.6 }}>
                         <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.95rem", margin:0, fontWeight:600 }}>Compatibility notice: This deployed contract version does not support project-level arbitration freeze.</p>
                         <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.9rem", margin:"8px 0 0" }}>Contributions and collaborator management remain enabled until the contract is upgraded to the latest AcademicLedger implementation.</p>
                       </div>
-                    )}
-                    {haltStateSupported && isHalted && (
+                      )}
+                      {haltStateSupported && isHalted && (
                       <div style={{ border:"1px solid #FCA5A5", borderRadius:"10px", background:"#FEE2E2", color:"#991B1B", padding:"16px", lineHeight:1.6 }}>
                         <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.95rem", margin:0, fontWeight:600 }}>Project Halted: Currently under institutional arbitration.</p>
                         <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.9rem", margin:"8px 0 0" }}>Contributions are frozen and collaborator management is disabled until arbitration is resolved.</p>
+                        {projectDisputeReason && (
+                          <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.9rem", margin:"10px 0 0", fontWeight:700 }}>
+                            Reason: {projectDisputeReason}
+                          </p>
+                        )}
                       </div>
-                    )}
-                    <LogContributionForm
-                      contractAddress={CONTRACT_ADDRESS}
-                      contractABI={AcademicLedgerABI.abi}
-                      projectId={projectId}
-                      isHalted={isHalted}
-                      isFinalizationActive={isFinalizationActive}
-                      onSuccess={() => setRefreshKey(k => k + 1)}
-                    />
-                    <ManageCollaborators
-                      contractAddress={CONTRACT_ADDRESS}
-                      contractABI={AcademicLedgerABI.abi}
-                      projectId={projectId}
-                      isHalted={isHalted}
-                      onResolved={fetchHaltState}
-                    />
-                  </div>
+                      )}
+                      <>
+                        <LogContributionForm
+                          contractAddress={CONTRACT_ADDRESS}
+                          contractABI={AcademicLedgerABI.abi}
+                          projectId={projectId}
+                          isHalted={isHalted}
+                          isFinalizationActive={isFinalizationActive}
+                          onSuccess={(confirmed: ConfirmedContribution) => {
+                            setConfirmedContribution(confirmed);
+                            setRefreshKey(k => k + 1);
+                          }}
+                        />
+                        <ManageCollaborators
+                          contractAddress={CONTRACT_ADDRESS}
+                          contractABI={AcademicLedgerABI.abi}
+                          projectId={projectId}
+                          isHalted={isHalted}
+                          disputeReason={projectDisputeReason}
+                          onResolved={fetchHaltState}
+                        />
+                      </>
+                    </div>
+                  )}
                   <ContributionTimeline
                     contractAddress={CONTRACT_ADDRESS}
                     contractABI={AcademicLedgerABI.abi}
                     projectId={projectId}
                     readOnlyRpcUrl={RPC_URL}
                     refreshKey={refreshKey}
+                    confirmedContribution={confirmedContribution}
                     onFinalizationStatusChange={setFinalizationStatus}
                   />
                 </div>

@@ -2,10 +2,14 @@ import { formatCountdown } from "./utils";
 
 export default function FinalizationBanner({
   finalizationStatus,
+  deadlinePassed,
   loading,
   onHalt,
 }) {
   if (!finalizationStatus?.isFinalizationActive || finalizationStatus?.isFinalized) {
+    return null;
+  }
+  if (deadlinePassed) {
     return null;
   }
 

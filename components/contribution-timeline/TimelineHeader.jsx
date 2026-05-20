@@ -6,12 +6,14 @@ export default function TimelineHeader({
   isPolling,
   isProjectAdmin,
   finalizationStatus,
+  deadlinePassed,
   finalizationDays,
   supportsEditableFinalizationWindow,
   lastRefreshed,
   onRefresh,
   onFinalizationDaysChange,
   onInitiateFinalization,
+  onExecuteFinalization,
 }) {
   const isFinalized = finalizationStatus?.isFinalized;
 
@@ -79,7 +81,7 @@ export default function TimelineHeader({
             background: isPolling ? "var(--accent)" : "var(--rule)",
             animation: isPolling ? "pulse 2s infinite" : "none",
           }} />
-          {isPolling ? "Polling every 30s" : loading ? "Connecting..." : "Idle"}
+          {isFinalized ? "Sealed" : isPolling ? "Polling every 30s" : loading ? "Connecting..." : "Idle"}
         </div>
         <button
           onClick={onRefresh}
@@ -192,6 +194,29 @@ export default function TimelineHeader({
               Initiate Finalization
             </button>
           </div>
+        )}
+        {isProjectAdmin && deadlinePassed && !isFinalized && (
+          <button
+            onClick={onExecuteFinalization}
+            disabled={loading}
+            style={{
+              fontFamily: "var(--font-geist-mono)",
+              fontSize: "10px",
+              fontWeight: 800,
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              background: "#15803D",
+              color: "#fff",
+              border: "1px solid #15803D",
+              padding: "10px 16px",
+              borderRadius: "8px",
+              cursor: loading ? "not-allowed" : "pointer",
+              opacity: loading ? 0.7 : 1,
+            }}
+            title="Execute finalization and seal this project permanently"
+          >
+            Seal Project
+          </button>
         )}
         {lastRefreshed && (
           <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "var(--ink-4)" }}>

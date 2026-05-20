@@ -137,18 +137,28 @@ export default function LogContributionForm({
       const provider = new ethers.BrowserProvider(window.ethereum);
       await provider.send("eth_requestAccounts", []);
       const signer   = await provider.getSigner();
+      const contributor = await signer.getAddress();
       const contract = new ethers.Contract(contractAddress, contractABI, signer);
       const tx = await contract.logContribution(projectId, uploadedCid, role);
-      setTxHash(tx.hash);
 
       // ── Mine ─────────────────────────────────────────────────────────────
       setPhase(PHASE.MINING);
       toast.loading("Transaction pending\u2026", { id: toastId });
-      await tx.wait(1);
+      const receipt = await tx.wait(1);
+      console.log("Confirmed contribution receipt", receipt);
+      const confirmedTxHash = receipt?.hash ?? receipt?.transactionHash ?? tx.hash;
+      setTxHash(confirmedTxHash);
 
       setPhase(PHASE.SUCCESS);
       toast.success("Contribution logged on-chain.", { id: toastId });
-      if (typeof onSuccess === "function") onSuccess();
+      if (typeof onSuccess === "function") {
+        onSuccess({
+          txHash: confirmedTxHash,
+          cid: uploadedCid,
+          contributor,
+          blockNumber: receipt?.blockNumber ? Number(receipt.blockNumber) : null,
+        });
+      }
     } catch (err) {
       const msg = err?.code === 4001 ? "Transaction rejected in MetaMask." : getFriendlyError(err, "Unknown error.");
       setErrorMsg(msg); setPhase(PHASE.ERROR);

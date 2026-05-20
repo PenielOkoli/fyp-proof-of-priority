@@ -16,7 +16,7 @@ import { getFriendlyError } from "@/utils/errorFormatter";
 function isValidAddress(addr) { return /^0x[0-9a-fA-F]{40}$/.test(addr); }
 function truncate(addr) { return addr ? `${addr.slice(0,6)}...${addr.slice(-4)}` : "—"; }
 
-export default function ManageCollaborators({ contractAddress, contractABI, projectId, isHalted = false, onResolved }) {
+export default function ManageCollaborators({ contractAddress, contractABI, projectId, isHalted = false, disputeReason = "", onResolved }) {
   const { address } = useWallet();
 
   const [isAdmin,        setIsAdmin]        = useState(false);
@@ -73,6 +73,36 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
       let authStatusUnavailable = false;
       let profileLookupUnavailable = false;
 
+      // Helper: fetch profile with a small retry/backoff and increasing timeout
+      async function fetchProfileWithRetries(addr, maxRetries = 2, baseTimeout = 5000) {
+        for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+          try {
+            const profilePromise = contract.getProfile(addr);
+            const timeoutMs = baseTimeout * Math.pow(2, attempt);
+            const timeoutPromise = new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("Profile fetch timeout")), timeoutMs)
+            );
+            const p = await Promise.race([profilePromise, timeoutPromise]);
+            return p;
+          } catch (err) {
+            if (err?.code === "CALL_EXCEPTION" || err?.message?.includes("missing revert data")) {
+              console.warn(`getProfile not available on this contract; skipping profile lookups.`);
+              profileLookupUnavailable = true;
+              return null;
+            }
+            // transient: retry with backoff
+            if (attempt < maxRetries) {
+              const backoff = 300 * Math.pow(2, attempt);
+              await new Promise((r) => setTimeout(r, backoff));
+              continue;
+            }
+            console.warn(`Failed to fetch profile for ${addr}: ${err?.message || err}`);
+            return null;
+          }
+        }
+        return null;
+      }
+
       for (let i = 0; i < addresses.length; i += 1) {
         const addr = addresses[i];
         let isAuth = false;
@@ -94,26 +124,8 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
           }
         }
 
-        if (!authStatusUnavailable && isAuth) {
-          if (!profileLookupUnavailable) {
-            try {
-              const profilePromise = contract.getProfile(addr);
-              const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error("Profile fetch timeout")), 5000)
-              );
-              profile = await Promise.race([profilePromise, timeoutPromise]);
-            } catch (err) {
-              if (err?.code === "CALL_EXCEPTION" || err?.message?.includes("missing revert data")) {
-                console.warn(`getProfile not available on this contract; skipping profile lookups.`);
-                profileLookupUnavailable = true;
-              } else if (err?.code === 429 || err?.message?.includes("compute units")) {
-                console.warn(`Rate limited while fetching profile for ${addr}.`);
-              } else {
-                console.error(`Failed to fetch profile for ${addr}:`, err);
-              }
-              profile = null;
-            }
-          }
+        if (!authStatusUnavailable && isAuth && !profileLookupUnavailable) {
+          profile = await fetchProfileWithRetries(addr);
         }
 
         enriched.push({
@@ -309,6 +321,11 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
             <div style={{ border:"1px solid #FECACA", borderRadius:"8px", background:"#FEF2F2", padding:"16px", marginBottom:"18px" }}>
               <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.95rem", color:"#991B1B", margin:0, fontWeight:700 }}>Arbitration Active: Collaborator changes are frozen.</p>
               <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.9rem", color:"#991B1B", margin:"10px 0 0" }}>Only the project admin can resolve the dispute to restore write access.</p>
+              {disputeReason && (
+                <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.9rem", color:"#7F1D1D", margin:"10px 0 0", fontWeight:700, lineHeight:1.5 }}>
+                  Reason: {disputeReason}
+                </p>
+              )}
               <button onClick={handleResolveDispute} disabled={resolving}
                 style={{ marginTop:"12px", padding:"10px 16px", borderRadius:"6px", border:"1px solid #991B1B", background: resolving ? "#FEE2E2" : "#991B1B", color: resolving ? "#991B1B" : "#fff", fontWeight:700, cursor: resolving ? "not-allowed" : "pointer" }}>
                 {resolving ? "Resolving dispute…" : "Resolve Dispute"}

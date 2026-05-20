@@ -1,0 +1,34 @@
+{
+  "0xe2dee528833f5482c308ce5358775d7c0a2424d3-1779200484-bafkreibiarv7khcjzrftqispmm5xug4uia7sjvbhcofahkevlhqw3gjcgm": {
+    "projectId": "DLT_Research2026",
+    "contributor": "0xE2DEe528833F5482c308cE5358775D7C0a2424d3",
+    "cid": "bafkreibiarv7khcjzrftqispmm5xug4uia7sjvbhcofahkevlhqw3gjcgm",
+    "timestamp": "1779200484",
+    "blockNumber": 10880114,
+    "txHash": "0x3f61530f9a91c56c2510d65ff164a69c1864fdcc63964e99f11024e627eff448"
+  },
+  "0x5ed37374a4f5cd1e79a514f79ae1db48c9f83704-1779201024-bafkreigw42mihwoxwh4ywua6f3quo2v67ax7nc25zikzydroccalf75xzm": {
+    "projectId": "DLT_Research2026",
+    "contributor": "0x5ED37374A4F5Cd1e79a514f79Ae1Db48C9f83704",
+    "cid": "bafkreigw42mihwoxwh4ywua6f3quo2v67ax7nc25zikzydroccalf75xzm",
+    "timestamp": "1779201024",
+    "blockNumber": 10880146,
+    "txHash": "0xeb18e997df94f5a6c9dfc5413d59411aff730fd800316a82a1f4f7ba777d82be"
+  },
+  "0x621d48358507586c2785fffc38a3a85e2940ad60-1779202224-bafkreib2k26a7bnnmx5mhfqe6y5cywmqbqaceitarsodbr4zvwaq7hqene": {
+    "projectId": "DLT_Research2026",
+    "contributor": "0x621D48358507586c2785FFfc38A3a85e2940AD60",
+    "cid": "bafkreib2k26a7bnnmx5mhfqe6y5cywmqbqaceitarsodbr4zvwaq7hqene",
+    "timestamp": "1779202224",
+    "blockNumber": 10880224,
+    "txHash": "0x45082313f0d0fd06ebd50d9ca7e97b420d1a1fa9f25a616a714d1b5a8de608c0"
+  },
+  "0x5ed37374a4f5cd1e79a514f79ae1db48c9f83704-1779207924-bafkreicwffw2ut6eqps3iuzhjwe2txqfymut4cfve5nkhleo4a2aab35le": {
+    "projectId": "DLT_Research2026",
+    "contributor": "0x5ED37374A4F5Cd1e79a514f79Ae1Db48C9f83704",
+    "cid": "bafkreicwffw2ut6eqps3iuzhjwe2txqfymut4cfve5nkhleo4a2aab35le",
+    "timestamp": "1779207924",
+    "blockNumber": 10880590,
+    "txHash": "0xf9760cd82cf4c8a45b743b79093dbd2393031089e34a3715f4d3a040423da927"
+  }
+}
