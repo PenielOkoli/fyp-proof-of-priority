@@ -25,6 +25,7 @@
 html { font-size: 16px; }
 
 body {
+  margin: 0;
   background: var(--paper);
   color: var(--ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
@@ -39,3 +40,90 @@ body {
 ::-webkit-scrollbar-track { background: var(--paper-2); }
 ::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-4); }
+
+.app-shell {
+  --workspace-cols: minmax(280px, 360px) minmax(0, 1fr);
+  width: min(100% - 48px, 1180px);
+  margin: 0 auto;
+  padding: 30px 0 36px;
+}
+
+.workspace-grid {
+  display: grid;
+  gap: 24px;
+  align-items: start;
+  min-width: 0;
+}
+
+.workspace-sidebar,
+.timeline-card,
+.timeline-card-body,
+.timeline-entry,
+.timeline-entry-card {
+  min-width: 0;
+}
+
+.timeline-entry-card {
+  max-width: 100%;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    width: min(100% - 28px, 720px);
+    padding-top: 22px;
+  }
+
+  .workspace-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .app-header-row {
+    align-items: flex-start !important;
+  }
+
+  .app-header-network {
+    text-align: left !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    width: min(100% - 20px, 100%);
+    padding-top: 18px;
+  }
+
+  .app-title {
+    font-size: 1.55rem !important;
+  }
+
+  .timeline-card-body {
+    padding: 16px !important;
+  }
+
+  .timeline-entry {
+    gap: 10px !important;
+  }
+
+  .timeline-entry-card {
+    padding: 16px !important;
+  }
+
+  .timeline-entry-head,
+  .timeline-entry-meta,
+  .timeline-entry-identity-row {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+  }
+
+  .timeline-entry-head {
+    gap: 12px;
+  }
+
+  .timeline-entry-meta {
+    gap: 14px !important;
+  }
+
+  .timeline-entry-links {
+    grid-template-columns: 1fr !important;
+  }
+}
