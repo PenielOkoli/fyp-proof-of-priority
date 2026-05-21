@@ -9,6 +9,7 @@ import ManageCollaborators from "@/components/ManageCollaborators";
 import ContributionTimeline from "@/components/ContributionTimeline";
 import RegisterProfileModal from "@/components/RegisterProfileModal";
 import AcademicLedgerABI from "@/contracts/AcademicLedger.json";
+import { getContributionHash } from "@/components/contribution-timeline/utils";
 
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS!;
 const RPC_URL          = process.env.NEXT_PUBLIC_RPC_URL!;
@@ -16,6 +17,7 @@ const DISPUTE_REASON_ABI = [
   "function projectDisputeReasons(string) view returns (string)",
   "function getProjectDisputeReason(string) view returns (string)",
 ];
+const UNKNOWN_DISPUTED_IDENTITY = "an unknown collaborator";
 
 type ConfirmedContribution = {
   txHash: string;
@@ -35,6 +37,24 @@ type RpcError = {
   message?: string;
 };
 
+type ContributionLike = {
+  contributor: string;
+  timestamp: bigint | number;
+};
+
+type DisputeEventLog = {
+  blockNumber?: number;
+  index?: number;
+  logIndex?: number;
+  args?: {
+    contributionHash?: string;
+  };
+};
+
+function truncateAddress(addr: string) {
+  return addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : UNKNOWN_DISPUTED_IDENTITY;
+}
+
 export default function ProjectPage() {
   const { isConnected, isSepolia, needsProfile } = useWallet();
   const [projectId,  setProjectId]  = useState("");
@@ -42,6 +62,7 @@ export default function ProjectPage() {
   const [confirmedContribution, setConfirmedContribution] = useState<ConfirmedContribution | null>(null);
   const [isHalted, setIsHalted] = useState(false);
   const [projectDisputeReason, setProjectDisputeReason] = useState("");
+  const [disputedIdentity, setDisputedIdentity] = useState(UNKNOWN_DISPUTED_IDENTITY);
   const [haltStateSupported, setHaltStateSupported] = useState(true);
   const [finalizationStatus, setFinalizationStatus] = useState<FinalizationStatus>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -61,6 +82,7 @@ export default function ProjectPage() {
     if (!projectId) {
       setIsHalted(false);
       setProjectDisputeReason("");
+      setDisputedIdentity(UNKNOWN_DISPUTED_IDENTITY);
       setHaltStateSupported(true);
       setFinalizationStatus(null);
       return;
@@ -73,21 +95,82 @@ export default function ProjectPage() {
       setIsHalted(Boolean(halted));
       setHaltStateSupported(true);
       if (halted) {
-        const reasonContract = new ethers.Contract(CONTRACT_ADDRESS, DISPUTE_REASON_ABI, provider);
-        let reason = "";
+        let identity = UNKNOWN_DISPUTED_IDENTITY;
         try {
-          reason = await reasonContract.projectDisputeReasons(projectId);
-        } catch {
+          const storedContributions = await contract.getContributions(projectId) as ContributionLike[];
+
+          const resolveContributionIdentity = async (contribution: ContributionLike) => {
+            let resolved = truncateAddress(contribution.contributor);
+            try {
+              const profile = await contract.getProfile(contribution.contributor) as { exists?: boolean; name?: string };
+              if (profile?.exists && profile.name) resolved = profile.name;
+            } catch {
+              // Fallback to the wallet label if profile lookup is unavailable.
+            }
+            return resolved;
+          };
+
+          let activeDisputeHash = "";
           try {
-            reason = await reasonContract.getProjectDisputeReason(projectId);
+            const currentBlock = await provider.getBlockNumber();
+            const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 10823551);
+            const logs = await contract.queryFilter(
+              contract.filters.ContributionDisputed(projectId),
+              Math.max(deployBlock, 0),
+              currentBlock
+            ) as DisputeEventLog[];
+            const latest = logs.sort((a, b) => {
+              const blockDelta = Number(a.blockNumber ?? 0) - Number(b.blockNumber ?? 0);
+              if (blockDelta !== 0) return blockDelta;
+              return Number(a.index ?? a.logIndex ?? 0) - Number(b.index ?? b.logIndex ?? 0);
+            }).at(-1);
+            activeDisputeHash = latest?.args?.contributionHash ?? "";
           } catch {
-            reason = "";
+            activeDisputeHash = "";
           }
+
+          const activeContribution = activeDisputeHash
+            ? storedContributions.find(contribution =>
+              getContributionHash(projectId, contribution.contributor, contribution.timestamp) === activeDisputeHash
+            )
+            : null;
+
+          if (activeContribution) {
+            identity = await resolveContributionIdentity(activeContribution);
+          } else {
+            const newestFirst = [...storedContributions].sort((a, b) => Number(b.timestamp) - Number(a.timestamp));
+            for (const contribution of newestFirst) {
+              const isContributionDisputed = await contract.checkIfDisputed(
+                projectId,
+                contribution.contributor,
+                contribution.timestamp
+              );
+              if (isContributionDisputed) {
+                identity = await resolveContributionIdentity(contribution);
+                break;
+              }
+            }
+          }
+        } catch {
+          identity = UNKNOWN_DISPUTED_IDENTITY;
         }
-        setProjectDisputeReason(reason);
+        setDisputedIdentity(identity);
       } else {
-        setProjectDisputeReason("");
+        setDisputedIdentity(UNKNOWN_DISPUTED_IDENTITY);
       }
+
+      const reasonContract = new ethers.Contract(CONTRACT_ADDRESS, DISPUTE_REASON_ABI, provider);
+      let reason = "";
+      try {
+        reason = await reasonContract.projectDisputeReasons(projectId);
+      } catch {
+        try {
+          reason = await reasonContract.getProjectDisputeReason(projectId);
+        } catch {
+          reason = "";
+        }
+      }
+      setProjectDisputeReason(reason);
 
       try {
         const finStatus = await contract.getFinalizationStatus(projectId);
@@ -101,6 +184,7 @@ export default function ProjectPage() {
         console.warn("Project-level halt state unavailable on deployed contract version.");
         setIsHalted(false);
         setProjectDisputeReason("");
+        setDisputedIdentity(UNKNOWN_DISPUTED_IDENTITY);
         setHaltStateSupported(false);
         setFinalizationStatus(null);
         return;
@@ -108,6 +192,7 @@ export default function ProjectPage() {
       console.error("Failed to fetch project halt state:", err);
       setIsHalted(false);
       setProjectDisputeReason("");
+      setDisputedIdentity(UNKNOWN_DISPUTED_IDENTITY);
       setHaltStateSupported(true);
     }
   }, [projectId]);
@@ -134,15 +219,15 @@ export default function ProjectPage() {
         />
       )}
 
-      <div style={{ maxWidth:"1200px", margin:"0 auto", padding:"32px 40px" }}>
+      <div className="app-shell">
         <header style={{ borderBottom:"1px solid var(--rule)", paddingBottom:"24px", marginBottom:"28px" }}>
-          <div style={{ display:"flex", flexWrap:"wrap", alignItems:"flex-end", justifyContent:"space-between", gap:"16px" }}>
-            <div>
+          <div className="app-header-row" style={{ display:"flex", flexWrap:"wrap", alignItems:"flex-end", justifyContent:"space-between", gap:"16px" }}>
+            <div className="app-header-copy">
               <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--accent)", letterSpacing:"0.2em", textTransform:"uppercase", marginBottom:"6px" }}>Decentralised Ledger Technology</p>
-              <h1 style={{ fontFamily:"var(--font-lora)", fontSize:"2rem", fontWeight:600, lineHeight:1.2, color:"var(--ink)", margin:0 }}>Proof-of-Priority System</h1>
+              <h1 className="app-title" style={{ fontFamily:"var(--font-lora)", fontSize:"2rem", fontWeight:600, lineHeight:1.2, color:"var(--ink)", margin:0 }}>Proof-of-Priority System</h1>
               <p style={{ fontFamily:"var(--font-lora)", fontSize:"0.95rem", color:"var(--ink-3)", fontStyle:"italic", marginTop:"4px" }}>Verifiable Authorship Validation in Academic Research</p>
             </div>
-            <div style={{ borderLeft:"2px solid var(--accent)", paddingLeft:"12px", textAlign:"right" }}>
+            <div className="app-header-network" style={{ borderLeft:"2px solid var(--accent)", paddingLeft:"12px", textAlign:"right" }}>
               <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", textTransform:"uppercase", letterSpacing:"0.15em" }}>Network</p>
               <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"12px", color:"var(--ink-2)", fontWeight:600, marginTop:"2px" }}>Ethereum Sepolia</p>
               <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", marginTop:"2px" }}>EIP-1559 Testnet</p>
@@ -187,9 +272,9 @@ export default function ProjectPage() {
               </div>
             ) : (
               <>
-                <div style={{ display:"grid", gridTemplateColumns: isProjectImmutable ? "1fr" : "420px 1fr", gap:"28px", alignItems:"start" }}>
+                <div className="workspace-grid" style={{ gridTemplateColumns: isProjectImmutable ? "1fr" : "var(--workspace-cols)" }}>
                   {!isProjectImmutable && (
-                    <div style={{ display:"flex", flexDirection:"column", gap:"20px" }}>
+                    <div className="workspace-sidebar" style={{ display:"flex", flexDirection:"column", gap:"20px" }}>
                       {!haltStateSupported && projectId && (
                       <div style={{ border:"1px solid #FBBF24", borderRadius:"10px", background:"#FEF3C7", color:"#92400E", padding:"16px", lineHeight:1.6 }}>
                         <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.95rem", margin:0, fontWeight:600 }}>Compatibility notice: This deployed contract version does not support project-level arbitration freeze.</p>
@@ -197,13 +282,21 @@ export default function ProjectPage() {
                       </div>
                       )}
                       {haltStateSupported && isHalted && (
-                      <div style={{ border:"1px solid #FCA5A5", borderRadius:"10px", background:"#FEE2E2", color:"#991B1B", padding:"16px", lineHeight:1.6 }}>
-                        <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.95rem", margin:0, fontWeight:600 }}>Project Halted: Currently under institutional arbitration.</p>
-                        <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.9rem", margin:"8px 0 0" }}>Contributions are frozen and collaborator management is disabled until arbitration is resolved.</p>
+                      <div style={{ border:"1px solid #E6B8BF", borderRadius:"8px", background:"var(--danger-bg)", color:"var(--ink-2)", padding:"14px 16px", lineHeight:1.45 }}>
+                        <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", letterSpacing:"0.16em", textTransform:"uppercase", color:"var(--danger)", margin:"0 0 8px", fontWeight:700 }}>
+                          Arbitration Notice
+                        </p>
+                        <p style={{ fontFamily:"var(--font-geist-sans)", fontSize:"14px", margin:0, fontWeight:500 }}>
+                          Contribution logged by <strong style={{ color:"var(--ink)", fontWeight:700 }}>{disputedIdentity}</strong> is under institutional arbitration.
+                        </p>
+                        <p style={{ fontFamily:"var(--font-geist-sans)", fontSize:"13px", color:"var(--ink-3)", margin:"6px 0 0" }}>Contributions and collaborator management are frozen until arbitration is resolved.</p>
                         {projectDisputeReason && (
-                          <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.9rem", margin:"10px 0 0", fontWeight:700 }}>
-                            Reason: {projectDisputeReason}
-                          </p>
+                          <div style={{ borderTop:"1px solid #EAC8CD", marginTop:"12px", paddingTop:"10px" }}>
+                            <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", letterSpacing:"0.12em", textTransform:"uppercase", color:"var(--ink-4)", margin:"0 0 4px", fontWeight:700 }}>Reason</p>
+                            <p style={{ fontFamily:"var(--font-geist-sans)", fontSize:"13px", color:"var(--ink-2)", margin:0, lineHeight:1.5 }}>
+                              {projectDisputeReason}
+                            </p>
+                          </div>
                         )}
                       </div>
                       )}
@@ -213,6 +306,7 @@ export default function ProjectPage() {
                           contractABI={AcademicLedgerABI.abi}
                           projectId={projectId}
                           isHalted={isHalted}
+                          disputedIdentity={disputedIdentity}
                           isFinalizationActive={isFinalizationActive}
                           onSuccess={(confirmed: ConfirmedContribution) => {
                             setConfirmedContribution(confirmed);
@@ -224,6 +318,7 @@ export default function ProjectPage() {
                           contractABI={AcademicLedgerABI.abi}
                           projectId={projectId}
                           isHalted={isHalted}
+                          disputedIdentity={disputedIdentity}
                           disputeReason={projectDisputeReason}
                           onResolved={fetchHaltState}
                         />

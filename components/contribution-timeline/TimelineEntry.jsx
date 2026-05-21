@@ -12,15 +12,26 @@ export default function TimelineEntry({
   isNew,
   profile,
   isDisputed,
+  hasDisputeHistory = false,
+  isDisputeResolved = false,
   disputeReason,
   isProjectFinalized,
-  isProjectAdmin,
   canDispute,
-  hasUsedStrike,
   isFlagging,
   onFlagDispute,
 }) {
   const style = ROLE_STYLE[entry.role] ?? DEFAULT_STYLE;
+  const historyTone = hasDisputeHistory
+    ? {
+      dot: "#DC2626",
+      bg: "#FEF2F2",
+      border: "#FECACA",
+      ink: "#991B1B",
+      accent: "#DC2626",
+      badgeBg: "#FEE2E2",
+      label: "DISPUTED",
+    }
+    : null;
   const d = new Date(Number(entry.timestamp) * 1000);
   const utcPlusOne = new Date(d.getTime() + 60 * 60 * 1000);
   const dateUTC = utcPlusOne.toLocaleString("en-GB", {
@@ -36,7 +47,6 @@ export default function TimelineEntry({
 
   const [isHovered, setIsHovered] = useState(false);
   const [copiedType, setCopiedType] = useState(null);
-  const [showDisputeReason, setShowDisputeReason] = useState(false);
   const [showDisputeForm, setShowDisputeForm] = useState(false);
   const [disputeDraft, setDisputeDraft] = useState("");
 
@@ -57,41 +67,42 @@ export default function TimelineEntry({
   };
 
   return (
-    <div style={{ display: "flex", gap: "16px", marginBottom: "24px", animation: isNew ? "slideIn 0.4s ease forwards" : "none" }}>
+    <div className="timeline-entry" style={{ display: "flex", gap: "16px", marginBottom: "24px", animation: isNew ? "slideIn 0.4s ease forwards" : "none" }}>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: "4px" }}>
         <div style={{
           width: "9px",
           height: "9px",
           borderRadius: "50%",
-          background: isDisputed ? "#DC2626" : style.bar,
+          background: historyTone ? historyTone.dot : style.bar,
           border: "2px solid #fff",
-          boxShadow: `0 0 0 1px ${isDisputed ? "#DC2626" : style.bar}`,
+          boxShadow: `0 0 0 1px ${historyTone ? historyTone.dot : style.bar}`,
         }} />
         <div style={{ width: "1px", height: "100%", background: "linear-gradient(to bottom, var(--rule), transparent)", marginTop: "4px" }} />
       </div>
 
       <div
+        className="timeline-entry-card"
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
         style={{
           flex: 1,
-          background: isDisputed ? "#FEF2F2" : "var(--paper)",
+          background: historyTone ? historyTone.bg : "var(--paper)",
           borderRadius: "8px",
-          borderLeft: `3px solid ${isDisputed ? "#DC2626" : style.bar}`,
+          borderLeft: `3px solid ${historyTone ? historyTone.dot : style.bar}`,
           padding: "20px 24px",
-          border: `1px solid ${isDisputed ? "#FECACA" : isNew ? "var(--accent)" : "var(--rule)"}`,
+          border: `1px solid ${historyTone ? historyTone.border : isNew ? "var(--accent)" : "var(--rule)"}`,
           transition: "all 0.2s ease-in-out",
           transform: isHovered ? "translateY(-2px)" : "translateY(0)",
           boxShadow: isHovered ? "0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -2px rgba(0,0,0,0.04)" : "0 2px 8px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)",
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
+        <div className="timeline-entry-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
           <div>
-            <h3 style={{ fontFamily: "var(--font-lora)", fontSize: "1.1rem", fontWeight: "600", color: isDisputed ? "#991B1B" : "var(--ink)", margin: "0 0 4px 0" }}>
+            <h3 className="timeline-date" style={{ fontFamily: "var(--font-lora)", fontSize: "1.1rem", fontWeight: "600", color: historyTone ? historyTone.ink : "var(--ink)", margin: "0 0 4px 0" }}>
               {dateUTC}
             </h3>
-            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: isDisputed ? "#DC2626" : "var(--ink-4)", margin: 0 }}>
-              BLOCK TIMESTAMP: <span style={{ color: isDisputed ? "#991B1B" : "var(--ink-2)", fontWeight: "500" }}>
+            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: historyTone ? historyTone.accent : "var(--ink-4)", margin: 0 }}>
+              BLOCK TIMESTAMP: <span style={{ color: historyTone ? historyTone.ink : "var(--ink-2)", fontWeight: "500" }}>
                 {Number(entry.timestamp).toString()}
               </span>
             </p>
@@ -102,14 +113,13 @@ export default function TimelineEntry({
                 JUST NOW
               </span>
             )}
-            {isDisputed && (
-              <button
-                onClick={() => setShowDisputeReason(!showDisputeReason)}
-                title="Flagged as disputed"
-                style={{ fontFamily: "var(--font-geist-mono)", fontSize: "10px", fontWeight: "600", letterSpacing: "0.05em", background: "#FEE2E2", color: "#DC2626", padding: "4px 8px", borderRadius: "4px", border: "1px solid #FECACA", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px" }}
+            {hasDisputeHistory && (
+              <span
+                title={isDisputeResolved ? "Disputed contribution excluded from sealed receipt" : "Flagged as disputed"}
+                style={{ fontFamily: "var(--font-geist-mono)", fontSize: "10px", fontWeight: "600", letterSpacing: "0.05em", background: historyTone.badgeBg, color: historyTone.accent, padding: "4px 8px", borderRadius: "4px", border: `1px solid ${historyTone.border}`, display: "flex", alignItems: "center", gap: "4px" }}
               >
-                <DisputeIcon /> DISPUTED
-              </button>
+                <DisputeIcon /> {historyTone.label}
+              </span>
             )}
             {isProjectFinalized && (
               <span style={{ fontFamily: "var(--font-geist-mono)", fontSize: "10px", fontWeight: "600", letterSpacing: "0.05em", background: "#DCFCE7", color: "#15803D", padding: "4px 8px", borderRadius: "4px", border: "1px solid #86EFAC" }}>
@@ -119,24 +129,13 @@ export default function TimelineEntry({
           </div>
         </div>
 
-        {isDisputed && showDisputeReason && (
-          <div style={{ background: "#FCA5A5", borderRadius: "6px", padding: "10px 12px", marginBottom: "16px", borderLeft: "3px solid #DC2626" }}>
-            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: "#7F1D1D", margin: "0 0 4px 0", fontWeight: "600" }}>
-              Dispute Reason:
-            </p>
-            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: "#7F1D1D", margin: 0, lineHeight: 1.5, wordBreak: "break-word" }}>
-              {disputeReason || "Reason unavailable. The contribution has been flagged as disputed."}
-            </p>
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: "32px", marginBottom: "20px", paddingBottom: "16px", borderBottom: "1px dashed var(--rule)" }}>
+        <div className="timeline-entry-meta" style={{ display: "flex", gap: "32px", marginBottom: "20px", paddingBottom: "16px", borderBottom: "1px dashed var(--rule)" }}>
           <div>
-            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: isDisputed ? "#991B1B" : "var(--ink-4)", textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
+            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: historyTone ? historyTone.ink : "var(--ink-4)", textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
               Registered Identity
             </p>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ fontFamily: "var(--font-geist-mono)", fontSize: "13px", color: isDisputed ? "#991B1B" : "var(--ink)", fontWeight: "500" }}>
+            <div className="timeline-entry-identity-row" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontFamily: "var(--font-geist-mono)", fontSize: "13px", color: historyTone ? historyTone.ink : "var(--ink)", fontWeight: "500" }}>
                 {profile?.name ?? "Unregistered"}
               </span>
               <button
@@ -144,28 +143,28 @@ export default function TimelineEntry({
                   navigator.clipboard?.writeText(entry.contributor);
                   toast.success("Address copied");
                 }}
-                style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: isDisputed ? "#991B1B" : "var(--ink-4)", background: isDisputed ? "#FEE2E2" : "var(--paper-2)", border: isDisputed ? "1px solid #FECACA" : "1px solid var(--rule)", padding: "2px 6px", borderRadius: "4px", cursor: "pointer" }}
+                style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: historyTone ? historyTone.ink : "var(--ink-4)", background: historyTone ? historyTone.badgeBg : "var(--paper-2)", border: historyTone ? `1px solid ${historyTone.border}` : "1px solid var(--rule)", padding: "2px 6px", borderRadius: "4px", cursor: "pointer" }}
               >
                 {truncate(entry.contributor)}
               </button>
             </div>
           </div>
           <div>
-            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: isDisputed ? "#991B1B" : "var(--ink-4)", textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
+            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: historyTone ? historyTone.ink : "var(--ink-4)", textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
               CRediT Role
             </p>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "8px" }}>
-              <span style={{ fontFamily: "var(--font-geist-mono)", fontSize: "12px", fontWeight: "500", padding: "3px 8px", borderRadius: "4px", ...(isDisputed ? DISPUTE_BADGE : style.badge) }}>
+              <span style={{ fontFamily: "var(--font-geist-mono)", fontSize: "12px", fontWeight: "500", padding: "3px 8px", borderRadius: "4px", ...(hasDisputeHistory ? DISPUTE_BADGE : style.badge) }}>
                 {entry.role}
               </span>
 
-              {isDisputed && (
-                <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: "4px", padding: "7px 9px", maxWidth: "300px" }}>
-                  <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "#991B1B", textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 4px 0", fontWeight: 700 }}>
+              {hasDisputeHistory && disputeReason && (
+                <div className="timeline-dispute-reason" style={{ background: "#FEF2F2", border: `1px solid ${historyTone.border}`, borderRadius: "4px", padding: "7px 9px", maxWidth: "300px" }}>
+                  <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: historyTone.ink, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 4px 0", fontWeight: 700 }}>
                     Dispute reason
                   </p>
-                  <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "10px", color: "#7F1D1D", margin: 0, lineHeight: 1.5, wordBreak: "break-word" }}>
-                    {disputeReason || "Reason unavailable. Only the dispute flag is stored on-chain."}
+                  <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "10px", color: historyTone.ink, margin: 0, lineHeight: 1.5, wordBreak: "break-word" }}>
+                    {disputeReason}
                   </p>
                 </div>
               )}
@@ -178,11 +177,6 @@ export default function TimelineEntry({
                 >
                   Flag Dispute
                 </button>
-              )}
-              {hasUsedStrike && !isDisputed && !canDispute && (
-                <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: "#7C3AED", margin: 0, lineHeight: 1.4, maxWidth: "280px" }}>
-                  You have already used your one-strike dispute for this project. Further disputes are disabled until the admin resolves arbitration.
-                </p>
               )}
             </div>
           </div>
@@ -199,31 +193,31 @@ export default function TimelineEntry({
           />
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+        <div className="timeline-entry-links" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
           <div>
-            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: isDisputed ? "#991B1B" : "var(--ink-4)", textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
+            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: hasDisputeHistory ? "#991B1B" : "var(--ink-4)", textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
               IPFS Artifact CID
             </p>
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <a href={`${GATEWAY}/${entry.cid}`} target="_blank" rel="noreferrer" style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: isDisputed ? "#991B1B" : "var(--accent)", textDecoration: "none", wordBreak: "break-all" }}>
+              <a href={`${GATEWAY}/${entry.cid}`} target="_blank" rel="noreferrer" style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: hasDisputeHistory ? "#991B1B" : "var(--accent)", textDecoration: "none", wordBreak: "break-all" }}>
                 {truncate(entry.cid)} ↗
               </a>
-              <button onClick={() => handleCopy(entry.cid, "cid")} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", color: isDisputed ? "#DC2626" : "#9CA3AF", display: "flex", alignItems: "center" }} title="Copy Full CID">
+              <button onClick={() => handleCopy(entry.cid, "cid")} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", color: hasDisputeHistory ? "#DC2626" : "#9CA3AF", display: "flex", alignItems: "center" }} title="Copy Full CID">
                 {copiedType === "cid" ? <CheckIcon /> : <CopyIcon />}
               </button>
             </div>
           </div>
           <div>
-            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: isDisputed ? "#991B1B" : "var(--ink-4)", textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
+            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: "9px", color: hasDisputeHistory ? "#991B1B" : "var(--ink-4)", textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
               Sepolia TX Hash
             </p>
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               {entry.txHash ? (
                 <>
-                  <a href={`https://sepolia.etherscan.io/tx/${entry.txHash}`} target="_blank" rel="noreferrer" style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: isDisputed ? "#991B1B" : "var(--ink-3)", textDecoration: "none", wordBreak: "break-all" }}>
+                  <a href={`https://sepolia.etherscan.io/tx/${entry.txHash}`} target="_blank" rel="noreferrer" style={{ fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: hasDisputeHistory ? "#991B1B" : "var(--ink-3)", textDecoration: "none", wordBreak: "break-all" }}>
                     {truncate(entry.txHash)} ↗
                   </a>
-                  <button onClick={() => handleCopy(entry.txHash, "txHash")} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", color: isDisputed ? "#DC2626" : "#9CA3AF", display: "flex", alignItems: "center" }} title="Copy Full Hash">
+                  <button onClick={() => handleCopy(entry.txHash, "txHash")} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", color: hasDisputeHistory ? "#DC2626" : "#9CA3AF", display: "flex", alignItems: "center" }} title="Copy Full Hash">
                     {copiedType === "txHash" ? <CheckIcon /> : <CopyIcon />}
                   </button>
                 </>

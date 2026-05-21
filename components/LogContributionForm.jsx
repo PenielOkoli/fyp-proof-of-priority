@@ -39,6 +39,7 @@ export default function LogContributionForm({
   projectId,
   onSuccess,
   isHalted = false,
+  disputedIdentity = "an unknown collaborator",
   isFinalizationActive = false,
 }) {
   const { address } = useWallet();
@@ -82,7 +83,7 @@ export default function LogContributionForm({
 
     // Guard: project halted under arbitration
     if (isHalted) {
-      const haltMsg = "Project halted: contributions are frozen under arbitration.";
+      const haltMsg = `Project halted: contribution logged by ${disputedIdentity} is under arbitration.`;
       setErrorMsg(haltMsg);
       toast.error(haltMsg);
       return;

@@ -24,6 +24,7 @@ const BACKOFF_MAX_MS = 30000;
 const MAX_BACKOFF_RETRIES = 10;
 const EVENT_LOOKBACK_BLOCKS = 100;
 const TX_HASH_CACHE_PREFIX = "proof-of-priority:tx-hashes";
+const DISPUTE_REASON_CACHE_PREFIX = "proof-of-priority:dispute-reasons";
 const MAX_TX_HASH_BACKFILLS_PER_REFRESH = 10;
 
 // ---------------------------------------------------------------------------
@@ -105,7 +106,6 @@ export default function ContributionTimeline({
   const [finalizationStatus, setFinalizationStatus] = useState(null);
   const [isProjectAdmin, setIsProjectAdmin] = useState(false);
   const [isProjectAuthorized, setIsProjectAuthorized] = useState(false);
-  const [hasUsedStrike, setHasUsedStrike] = useState(false);
   const [supportsAuthorizedDispute, setSupportsAuthorizedDispute] = useState(true);
   const [finalizationDays, setFinalizationDays] = useState(DEFAULT_FINALIZATION_DAYS);
   const [flaggingDisputeKey, setFlaggingDisputeKey] = useState(null);
@@ -164,6 +164,30 @@ export default function ContributionTimeline({
       // localStorage can be unavailable in private contexts; the in-memory state still works.
     }
   }, [getTxHashCacheStorageKey, readTxHashCache]);
+
+  const getDisputeReasonCacheStorageKey = useCallback((projId) => {
+    return `${DISPUTE_REASON_CACHE_PREFIX}:${contractAddress}:${projId}`;
+  }, [contractAddress]);
+
+  const readDisputeReasonCache = useCallback((projId) => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = window.localStorage.getItem(getDisputeReasonCacheStorageKey(projId));
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }, [getDisputeReasonCacheStorageKey]);
+
+  const writeDisputeReasonCache = useCallback((projId, updates) => {
+    if (typeof window === "undefined" || Object.keys(updates).length === 0) return;
+    try {
+      const next = { ...readDisputeReasonCache(projId), ...updates };
+      window.localStorage.setItem(getDisputeReasonCacheStorageKey(projId), JSON.stringify(next));
+    } catch {
+      // localStorage can be unavailable; event/on-chain reads still handle persistence.
+    }
+  }, [getDisputeReasonCacheStorageKey, readDisputeReasonCache]);
 
   const updateEntries = useCallback((nextEntries) => {
     entriesRef.current = nextEntries;
@@ -226,12 +250,18 @@ export default function ContributionTimeline({
     let changed = false;
     const next = { ...disputedEntriesRef.current };
     Object.entries(updates).forEach(([key, value]) => {
-      const existing = next[key];
-      const hasGoodReason = typeof existing === "string" && existing.length > 0;
-      const incomingIsEmpty = typeof value !== "string" || value.length === 0;
-      if (hasGoodReason && incomingIsEmpty) return;
-      if (next[key] !== (value ?? "")) {
-        next[key] = value ?? "";
+      const existing = typeof next[key] === "object"
+        ? next[key]
+        : { reason: next[key] ?? "", isActive: true };
+      const incoming = typeof value === "object"
+        ? { reason: value.reason ?? "", isActive: Boolean(value.isActive) }
+        : { reason: value ?? "", isActive: true };
+      const reason = incoming.reason || existing.reason;
+      const isActive = incoming.isActive;
+      const merged = { reason, isActive };
+
+      if (existing.reason !== merged.reason || existing.isActive !== merged.isActive) {
+        next[key] = merged;
         changed = true;
       }
     });
@@ -294,6 +324,8 @@ export default function ContributionTimeline({
 
   const fetchDisputeEvents = useCallback(async (contract, projId, entries = []) => {
     const allEvents = {};
+    const cachedReasons = readDisputeReasonCache(projId);
+    let latestDisputeHash = "";
 
     if (!eventQueriesDisabledRef.current) {
       let attempt = 0;
@@ -302,8 +334,8 @@ export default function ContributionTimeline({
         try {
           const currentBlock = await contract.provider.getBlockNumber();
           const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 10823551);
-          const fromBlock = Math.max(deployBlock, currentBlock - EVENT_LOOKBACK_BLOCKS, 0);
-          const eventTopic = ethers.id("ContributionDisputed(string,address,uint256,string)");
+          const fromBlock = Math.max(deployBlock, 0);
+          const eventTopic = ethers.id("ContributionDisputed(string,bytes32,string)");
 
           let allLogs = [];
           try {
@@ -323,15 +355,23 @@ export default function ContributionTimeline({
             );
           }
 
-          allLogs
+          const projectLogs = allLogs
             .filter(log => matchesIndexedProjectId(log, projId))
-            .forEach(log => {
+            .sort((a, b) => {
+              const blockDelta = Number(a.blockNumber ?? 0) - Number(b.blockNumber ?? 0);
+              if (blockDelta !== 0) return blockDelta;
+              return Number(a.index ?? a.logIndex ?? 0) - Number(b.index ?? b.logIndex ?? 0);
+            });
+
+          projectLogs.forEach(log => {
               const hash = log.args.contributionHash;
               const reason = typeof log.args.reason === "string" ? log.args.reason : "";
-              if (!(hash in allEvents) || (allEvents[hash] === "" && reason !== "")) {
-                allEvents[hash] = reason;
+              const existing = allEvents[hash];
+              if (!existing || (!existing.reason && reason)) {
+                allEvents[hash] = { reason: reason || cachedReasons[hash] || "", isActive: false };
               }
             });
+          latestDisputeHash = projectLogs.at(-1)?.args?.contributionHash ?? "";
 
           break;
         } catch {
@@ -348,19 +388,57 @@ export default function ContributionTimeline({
       }
     }
 
-    const unknownEntries = entries.filter(entry => {
+    let projectIsActivelyDisputed = false;
+    try {
+      projectIsActivelyDisputed = Boolean(await contract.isDisputed(projId));
+    } catch {
+      projectIsActivelyDisputed = false;
+    }
+
+    if (projectIsActivelyDisputed && latestDisputeHash && allEvents[latestDisputeHash]) {
+      allEvents[latestDisputeHash] = {
+        ...allEvents[latestDisputeHash],
+        isActive: true,
+      };
+    }
+
+    const entriesNeedingDisputeState = entries.filter(entry => {
       const hash = buildContributionHash(projId, entry.contributor, entry.timestamp);
-      return !(hash in allEvents) && !(hash in disputedEntriesRef.current);
+      const existing = allEvents[hash] ?? disputedEntriesRef.current[hash];
+      const normalized = typeof existing === "object"
+        ? existing
+        : { reason: existing ?? "", isActive: Boolean(existing) };
+      return !existing || !normalized.reason;
     });
 
-    if (unknownEntries.length > 0) {
-      await Promise.all(unknownEntries.map(async (entry) => {
+    if (entriesNeedingDisputeState.length > 0) {
+      await Promise.all(entriesNeedingDisputeState.map(async (entry) => {
         try {
           const hash = buildContributionHash(projId, entry.contributor, entry.timestamp);
           const disputed = await contract.checkIfDisputed(
             projId, entry.contributor, entry.timestamp
           );
-          if (disputed) allEvents[hash] = allEvents[hash] ?? "";
+          if (disputed) {
+            const existingRecord = disputedEntriesRef.current[hash];
+            const existingReason = typeof existingRecord === "object" ? existingRecord.reason : "";
+            let reason = allEvents[hash]?.reason ?? existingReason ?? cachedReasons[hash] ?? "";
+            if (!reason && typeof contract.getContributionDisputeReason === "function") {
+              try {
+                reason = await contract.getContributionDisputeReason(
+                  projId,
+                  entry.contributor,
+                  entry.timestamp
+                );
+              } catch {
+                reason = "";
+              }
+            }
+            allEvents[hash] = {
+              reason,
+              isActive: projectIsActivelyDisputed && latestDisputeHash === hash,
+            };
+            if (reason) writeDisputeReasonCache(projId, { [hash]: reason });
+          }
         } catch {
           // ignore
         }
@@ -368,7 +446,7 @@ export default function ContributionTimeline({
     }
 
     return allEvents;
-  }, []);
+  }, [readDisputeReasonCache, writeDisputeReasonCache]);
 
   const fetchFinalizationStatus = useCallback(async (contract, projId) => {
     try {
@@ -376,6 +454,61 @@ export default function ContributionTimeline({
     } catch {
       return null;
     }
+  }, []);
+
+  const isEntryExcludedFromReceipt = useCallback((entry) => {
+    if (!entry?.contributor || entry?.timestamp == null) return false;
+    const hash = buildContributionHash(projectId, entry.contributor, entry.timestamp);
+    return Boolean(disputedEntriesRef.current[hash]);
+  }, [projectId]);
+
+  const buildVerifiedCreditMatrix = useCallback((history) => {
+    const byContributor = new Map();
+
+    history
+      .filter(entry => !isEntryExcludedFromReceipt(entry))
+      .forEach((entry) => {
+        const key = entry.contributor.toLowerCase();
+        const existing = byContributor.get(key) ?? {
+          contributor: entry.contributor,
+          roles: new Set(),
+          contributions: 0,
+        };
+        if (entry.role) existing.roles.add(entry.role);
+        existing.contributions += 1;
+        byContributor.set(key, existing);
+      });
+
+    return [...byContributor.values()].map((row) => ({
+      contributor: row.contributor,
+      roles: [...row.roles].sort(),
+      contributions: row.contributions,
+    }));
+  }, [isEntryExcludedFromReceipt]);
+
+  const buildCreditMatrixFromReceipt = useCallback((contributors, roles) => {
+    const rows = Array.from(contributors ?? []);
+    const roleRows = Array.from(roles ?? []);
+    const byContributor = new Map();
+
+    rows.forEach((contributor, index) => {
+      const key = contributor.toLowerCase();
+      const role = roleRows[index];
+      const existing = byContributor.get(key) ?? {
+        contributor,
+        roles: new Set(),
+        contributions: 0,
+      };
+      if (role) existing.roles.add(role);
+      existing.contributions += 1;
+      byContributor.set(key, existing);
+    });
+
+    return [...byContributor.values()].map((row) => ({
+      contributor: row.contributor,
+      roles: [...row.roles].sort(),
+      contributions: row.contributions,
+    }));
   }, []);
 
   const buildLocalReceipt = useCallback((status, history) => {
@@ -390,11 +523,11 @@ export default function ContributionTimeline({
         ? Number(status.executedAt)
         : status?.finalizationDeadline
           ? Number(status.finalizationDeadline)
-          : newestTimestamp,
+        : newestTimestamp,
       finalizationDeadline: status?.finalizationDeadline ? Number(status.finalizationDeadline) : null,
-      creditMatrix: [],
+      creditMatrix: buildVerifiedCreditMatrix(history),
     };
-  }, [isDeadlinePassed]);
+  }, [buildVerifiedCreditMatrix, isDeadlinePassed]);
 
   const fetchProjectReceipt = useCallback(async (contract, projId, status, history) => {
     if (supportsProjectReceiptGetter && typeof contract.getProjectReceipt === "function") {
@@ -405,11 +538,7 @@ export default function ContributionTimeline({
         return {
           cid: receipt.cid ?? receipt.receiptCid ?? receipt.ipfsCid ?? receipt[0] ?? "",
           executedAt: Number(receipt.executedAt ?? receipt.timestamp ?? receipt[3] ?? 0),
-          creditMatrix: contributors.map((contributor, index) => ({
-            contributor,
-            roles: Array.isArray(roles[index]) ? roles[index] : [roles[index]].filter(Boolean),
-            contributions: 1,
-          })),
+          creditMatrix: buildCreditMatrixFromReceipt(contributors, roles),
         };
       } catch {
         // Older deployments do not expose getProjectReceipt yet; fall back below.
@@ -417,7 +546,7 @@ export default function ContributionTimeline({
     }
 
     return buildLocalReceipt(status, history);
-  }, [buildLocalReceipt, supportsProjectReceiptGetter]);
+  }, [buildCreditMatrixFromReceipt, buildLocalReceipt, supportsProjectReceiptGetter]);
 
   const getWalletAddress = useCallback(async () => {
     if (typeof window === "undefined" || !window.ethereum) {
@@ -442,16 +571,6 @@ export default function ContributionTimeline({
       const userAddress = await getWalletAddress();
       if (await contract.isProjectAdmin(projId, userAddress)) return true;
       return await contract.isAuthorized(projId, userAddress);
-    } catch {
-      return false;
-    }
-  }, [getWalletAddress]);
-
-  const checkHasDisputed = useCallback(async (contract, projId) => {
-    try {
-      const userAddress = await getWalletAddress();
-      if (typeof contract.hasDisputed !== "function") return false;
-      return await contract.hasDisputed(projId, userAddress);
     } catch {
       return false;
     }
@@ -764,16 +883,14 @@ export default function ContributionTimeline({
         }
       }
 
-      const [adminStatus, authorizedStatus, strikeStatus] = await Promise.all([
+      const [adminStatus, authorizedStatus] = await Promise.all([
         checkIsProjectAdmin(contractRef.current, projectId),
         checkIsAuthorized(contractRef.current, projectId),
-        checkHasDisputed(contractRef.current, projectId),
       ]);
 
       if (isMountedRef.current) {
         setIsProjectAdmin(adminStatus);
         setIsProjectAuthorized(authorizedStatus);
-        setHasUsedStrike(strikeStatus);
       }
       return true;
     } catch {
@@ -786,7 +903,6 @@ export default function ContributionTimeline({
     applyFinalizationStatus,
     checkIsProjectAdmin,
     checkIsAuthorized,
-    checkHasDisputed,
     fetchDisputeEvents,
     fetchFinalizationStatus,
     fetchProjectReceipt,
@@ -836,15 +952,13 @@ export default function ContributionTimeline({
         }
       }
 
-      const [adminStatus, authorizedStatus, strikeStatus] = await Promise.all([
+      const [adminStatus, authorizedStatus] = await Promise.all([
         checkIsProjectAdmin(contractRef.current, projectId),
         checkIsAuthorized(contractRef.current, projectId),
-        checkHasDisputed(contractRef.current, projectId),
       ]);
       if (isMountedRef.current) {
         setIsProjectAdmin(adminStatus);
         setIsProjectAuthorized(authorizedStatus);
-        setHasUsedStrike(strikeStatus);
       }
 
       // Fill in tx hashes after the stable refresh list has loaded.
@@ -871,7 +985,6 @@ export default function ContributionTimeline({
     applyFinalizationStatus,
     checkIsProjectAdmin,
     checkIsAuthorized,
-    checkHasDisputed,
     fetchDisputeEvents,
     fetchFinalizationStatus,
     fetchProjectReceipt,
@@ -974,13 +1087,12 @@ export default function ContributionTimeline({
 
         const contributors = history.map(e => e.contributor);
 
-        const [profileResult, disputes, finStatus, adminStatus, authorizedStatus, strikeStatus] = await Promise.allSettled([
+        const [profileResult, disputes, finStatus, adminStatus, authorizedStatus] = await Promise.allSettled([
           resolveProfiles(contributors, contract),
           fetchDisputeEvents(contract, projectId, history),
           fetchFinalizationStatus(contract, projectId),
           checkIsProjectAdmin(contract, projectId),
           checkIsAuthorized(contract, projectId),
-          checkHasDisputed(contract, projectId),
         ]);
 
         if (!isMountedRef.current) return;
@@ -1007,10 +1119,6 @@ export default function ContributionTimeline({
         if (authorizedStatus.status === "fulfilled") {
           setIsProjectAuthorized(authorizedStatus.value);
         }
-        if (strikeStatus.status === "fulfilled") {
-          setHasUsedStrike(strikeStatus.value);
-        }
-
         if (isMountedRef.current && !finStatus.value?.isFinalized && !isDeadlinePassed(finStatus.value)) {
           setIsPolling(true);
         }
@@ -1217,8 +1325,8 @@ export default function ContributionTimeline({
       await tx.wait();
 
       const hash = getContributionHash(entry.contributor, entry.timestamp);
-      mergeDisputedEntries({ [hash]: cleanReason });
-      setHasUsedStrike(true);
+      writeDisputeReasonCache(projectId, { [hash]: cleanReason });
+      mergeDisputedEntries({ [hash]: { reason: cleanReason, isActive: true } });
       toast.success("Contribution flagged as disputed.");
       scheduleActionPoll();
       return true;
@@ -1228,7 +1336,7 @@ export default function ContributionTimeline({
     } finally {
       setFlaggingDisputeKey(null);
     }
-  }, [getContributionHash, getWalletContract, mergeDisputedEntries, projectId, scheduleActionPoll, supportsAuthorizedDispute]);
+  }, [getContributionHash, getWalletContract, mergeDisputedEntries, projectId, scheduleActionPoll, supportsAuthorizedDispute, writeDisputeReasonCache]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px", minWidth: 0 }}>
@@ -1254,7 +1362,7 @@ export default function ContributionTimeline({
         />
       )}
 
-      <div style={{
+      <div className="timeline-card" style={{
         border: "1px solid var(--rule)",
         borderRadius: "8px",
         overflow: "hidden",
@@ -1264,7 +1372,7 @@ export default function ContributionTimeline({
           height: "2px",
           background: finalizationStatus?.isFinalized ? "#15803D" : "var(--indigo)",
         }} />
-        <div style={{ padding: "22px" }}>
+        <div className="timeline-card-body" style={{ padding: "22px" }}>
           <TimelineHeader
             projectId={projectId}
             loading={loading}
@@ -1338,11 +1446,15 @@ export default function ContributionTimeline({
               {entries.map(entry => {
                 const key = (entry.txHash || entry.cid) + "-" + entry.timestamp;
                 const hash = getContributionHash(entry.contributor, entry.timestamp);
-                const isDisputed = Object.prototype.hasOwnProperty.call(disputedEntries, hash);
-                const disputeReason = disputedEntries[hash] || null;
-                const canDispute = !isDisputed
+                const disputeRecord = disputedEntries[hash];
+                const normalizedDispute = typeof disputeRecord === "object"
+                  ? disputeRecord
+                  : { reason: disputeRecord || "", isActive: Boolean(disputeRecord) };
+                const disputeReason = normalizedDispute.reason || null;
+                const hasDisputeHistory = Boolean(disputeReason || disputeRecord);
+                const isDisputed = Boolean(normalizedDispute.isActive);
+                const canDispute = !hasDisputeHistory
                   && !isProjectSealedOrLocked
-                  && !hasUsedStrike
                   && (isProjectAdmin || (supportsAuthorizedDispute && isProjectAuthorized));
 
                 return (
@@ -1352,11 +1464,11 @@ export default function ContributionTimeline({
                     isNew={newIds.has(key)}
                     profile={profileCache[entry.contributor]}
                     isDisputed={isDisputed}
+                    hasDisputeHistory={hasDisputeHistory}
+                    isDisputeResolved={hasDisputeHistory && !isDisputed}
                     disputeReason={disputeReason}
                     isProjectFinalized={finalizationStatus?.isFinalized}
-                    isProjectAdmin={isProjectAdmin}
                     canDispute={canDispute}
-                    hasUsedStrike={hasUsedStrike}
                     isFlagging={flaggingDisputeKey === key}
                     onFlagDispute={handleFlagDispute}
                   />

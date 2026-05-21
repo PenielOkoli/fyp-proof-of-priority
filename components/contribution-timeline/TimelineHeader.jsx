@@ -18,7 +18,7 @@ export default function TimelineHeader({
   const isFinalized = finalizationStatus?.isFinalized;
 
   return (
-    <div style={{
+    <div className="timeline-header" style={{
       display: "flex",
       alignItems: "flex-start",
       justifyContent: "space-between",
@@ -27,7 +27,7 @@ export default function TimelineHeader({
       borderBottom: "1px solid var(--rule-light)",
       marginBottom: "16px",
     }}>
-      <div>
+      <div className="timeline-header-main">
         <p style={{
           fontFamily: "var(--font-geist-mono)",
           fontSize: "10px",
@@ -58,7 +58,7 @@ export default function TimelineHeader({
         </p>
       </div>
 
-      <div style={{
+      <div className="timeline-header-actions" style={{
         display: "flex",
         flexDirection: "column",
         alignItems: "flex-end",
@@ -114,7 +114,7 @@ export default function TimelineHeader({
           Refresh
         </button>
         {isProjectAdmin && !finalizationStatus?.isFinalizationActive && !isFinalized && (
-          <div style={{
+          <div className="finalization-controls" style={{
             display: "flex",
             flexWrap: "wrap",
             alignItems: "center",

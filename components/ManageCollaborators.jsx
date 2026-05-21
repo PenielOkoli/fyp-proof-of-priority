@@ -16,7 +16,7 @@ import { getFriendlyError } from "@/utils/errorFormatter";
 function isValidAddress(addr) { return /^0x[0-9a-fA-F]{40}$/.test(addr); }
 function truncate(addr) { return addr ? `${addr.slice(0,6)}...${addr.slice(-4)}` : "—"; }
 
-export default function ManageCollaborators({ contractAddress, contractABI, projectId, isHalted = false, disputeReason = "", onResolved }) {
+export default function ManageCollaborators({ contractAddress, contractABI, projectId, isHalted = false, disputeReason = "", disputedIdentity = "an unknown collaborator", onResolved }) {
   const { address } = useWallet();
 
   const [isAdmin,        setIsAdmin]        = useState(false);
@@ -33,6 +33,7 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
   const [roster,         setRoster]         = useState([]);
   const [rosterLoading,  setRosterLoading]  = useState(false);
   const [rosterError,    setRosterError]    = useState("");
+  const [revokingAddress, setRevokingAddress] = useState("");
 
   // Transfer ownership state
   const [transferAddr,   setTransferAddr]   = useState("");
@@ -217,6 +218,33 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
     } finally { setAuthorizing(false); }
   };
 
+  const handleRevokeAccess = async (collaboratorAddr) => {
+    if (!contractAddress || !contractABI || !projectId || !collaboratorAddr) return;
+    if (collaboratorAddr.toLowerCase() === adminAddress?.toLowerCase()) {
+      toast.error("The project admin cannot be revoked from the roster.");
+      return;
+    }
+
+    setRevokingAddress(collaboratorAddr);
+    const toastId = toast.loading("Confirm revocation in MetaMask...");
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const contract = new ethers.Contract(contractAddress, contractABI, signer);
+      const tx = await contract.removeCollaborator(projectId, collaboratorAddr);
+      toast.loading("Revoking collaborator access on-chain...", { id: toastId });
+      await tx.wait(1);
+      setRoster((current) => current.filter((entry) => entry.address.toLowerCase() !== collaboratorAddr.toLowerCase()));
+      toast.success("Collaborator access revoked.", { id: toastId });
+      await fetchRoster(adminAddress);
+    } catch (err) {
+      const msg = err?.code === 4001 ? "Rejected in MetaMask." : getFriendlyError(err, "Failed to revoke collaborator access.");
+      toast.error(msg, { id: toastId });
+    } finally {
+      setRevokingAddress("");
+    }
+  };
+
   // ── Transfer project admin ────────────────────────────────────────────────
   const handleTransfer = async (e) => {
     e.preventDefault();
@@ -318,16 +346,22 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
             </p>
           </div>
           {isHalted && (
-            <div style={{ border:"1px solid #FECACA", borderRadius:"8px", background:"#FEF2F2", padding:"16px", marginBottom:"18px" }}>
-              <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.95rem", color:"#991B1B", margin:0, fontWeight:700 }}>Arbitration Active: Collaborator changes are frozen.</p>
-              <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.9rem", color:"#991B1B", margin:"10px 0 0" }}>Only the project admin can resolve the dispute to restore write access.</p>
+            <div style={{ border:"1px solid #E6B8BF", borderRadius:"8px", background:"var(--danger-bg)", padding:"14px 16px", marginBottom:"18px" }}>
+              <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", letterSpacing:"0.16em", textTransform:"uppercase", color:"var(--danger)", margin:"0 0 8px", fontWeight:700 }}>Arbitration Active</p>
+              <p style={{ fontFamily:"var(--font-geist-sans)", fontSize:"14px", color:"var(--ink-2)", margin:0, fontWeight:500, lineHeight:1.45 }}>
+                Contribution logged by <strong style={{ color:"var(--ink)", fontWeight:700 }}>{disputedIdentity}</strong> is under review.
+              </p>
+              <p style={{ fontFamily:"var(--font-geist-sans)", fontSize:"13px", color:"var(--ink-3)", margin:"6px 0 0", lineHeight:1.45 }}>Only the project admin can resolve the dispute or revoke a collaborator&apos;s access.</p>
               {disputeReason && (
-                <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"0.9rem", color:"#7F1D1D", margin:"10px 0 0", fontWeight:700, lineHeight:1.5 }}>
-                  Reason: {disputeReason}
-                </p>
+                <div style={{ borderTop:"1px solid #EAC8CD", marginTop:"12px", paddingTop:"10px" }}>
+                  <p style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", letterSpacing:"0.12em", textTransform:"uppercase", color:"var(--ink-4)", margin:"0 0 4px", fontWeight:700 }}>Reason</p>
+                  <p style={{ fontFamily:"var(--font-geist-sans)", fontSize:"13px", color:"var(--ink-2)", margin:0, lineHeight:1.5 }}>
+                    {disputeReason}
+                  </p>
+                </div>
               )}
               <button onClick={handleResolveDispute} disabled={resolving}
-                style={{ marginTop:"12px", padding:"10px 16px", borderRadius:"6px", border:"1px solid #991B1B", background: resolving ? "#FEE2E2" : "#991B1B", color: resolving ? "#991B1B" : "#fff", fontWeight:700, cursor: resolving ? "not-allowed" : "pointer" }}>
+                style={{ marginTop:"12px", padding:"8px 12px", borderRadius:"6px", border:"1px solid var(--danger)", background: resolving ? "transparent" : "var(--danger)", color: resolving ? "var(--danger)" : "#fff", fontSize:"12px", fontWeight:700, cursor: resolving ? "not-allowed" : "pointer" }}>
                 {resolving ? "Resolving dispute…" : "Resolve Dispute"}
               </button>
             </div>
@@ -372,7 +406,15 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
                 Refresh
               </button>
             </div>
-            <RosterList roster={roster} loading={rosterLoading} currentAddress={address} error={rosterError} />
+            <RosterList
+              roster={roster}
+              loading={rosterLoading}
+              currentAddress={address}
+              error={rosterError}
+              canRevoke
+              revokingAddress={revokingAddress}
+              onRevoke={handleRevokeAccess}
+            />
           </div>
 
           {/* ── Danger Zone ────────────────────────────────────────────── */}
@@ -416,7 +458,7 @@ export default function ManageCollaborators({ contractAddress, contractABI, proj
 }
 
 // ── Roster List sub-component ─────────────────────────────────────────────────
-function RosterList({ roster, loading, currentAddress, error }) {
+function RosterList({ roster, loading, currentAddress, error, canRevoke = false, revokingAddress = "", onRevoke }) {
   if (loading) return (
     <div style={{ display:"flex", flexDirection:"column", gap:"6px" }}>
       {[...Array(2)].map((_, i) => (
@@ -450,6 +492,8 @@ function RosterList({ roster, loading, currentAddress, error }) {
     <div style={{ display:"flex", flexDirection:"column", gap:"6px" }}>
       {roster.map((entry, i) => {
         const isMe = currentAddress && entry.address.toLowerCase() === currentAddress.toLowerCase();
+        const isRevoking = revokingAddress && entry.address.toLowerCase() === revokingAddress.toLowerCase();
+        const showRevoke = canRevoke && !entry.isAdmin;
         return (
           <div key={i} style={{
             display:"flex", alignItems:"center", gap:"10px",
@@ -494,6 +538,41 @@ function RosterList({ roster, loading, currentAddress, error }) {
                 </span>
               </div>
             </div>
+            {showRevoke && (
+              <button
+                type="button"
+                onClick={() => onRevoke?.(entry.address)}
+                disabled={isRevoking}
+                title="Revoke collaborator access"
+                style={{
+                  display:"inline-flex",
+                  alignItems:"center",
+                  gap:"5px",
+                  flexShrink:0,
+                  border:"1px solid #E6B8BF",
+                  borderRadius:"5px",
+                  background:isRevoking ? "var(--danger-bg)" : "var(--paper)",
+                  color:"var(--danger)",
+                  padding:"6px 8px",
+                  fontFamily:"var(--font-geist-mono)",
+                  fontSize:"9px",
+                  fontWeight:700,
+                  letterSpacing:"0.08em",
+                  textTransform:"uppercase",
+                  cursor:isRevoking ? "not-allowed" : "pointer",
+                  opacity:isRevoking ? 0.65 : 1,
+                }}
+              >
+                {isRevoking ? (
+                  <svg style={{ animation:"spin 1s linear infinite", width:"11px", height:"11px" }} fill="none" viewBox="0 0 24 24"><circle style={{ opacity:0.2 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/><path style={{ opacity:0.8 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                ) : (
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 6h18M8 6V4h8v2m-9 0l1 14h8l1-14" />
+                  </svg>
+                )}
+                {isRevoking ? "Revoking" : "Revoke"}
+              </button>
+            )}
           </div>
         );
       })}

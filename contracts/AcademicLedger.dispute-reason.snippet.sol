@@ -71,8 +71,6 @@ function resolveDispute(
     // require(projectDisputes[_projectId].isDisputed, "Project not disputed");
     // projectDisputes[_projectId].isDisputed = false;
 
-    projectDisputeReasons[_projectId] = "";
-
     // Existing event emission remains here.
     // emit DisputeResolved(_projectId, msg.sender, block.timestamp);
 }

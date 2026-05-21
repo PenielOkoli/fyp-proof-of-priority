@@ -46,7 +46,7 @@ export default function ProofOfPriorityReceipt({
   entries,
   profileCache,
 }) {
-  const matrix = receipt?.creditMatrix?.length
+  const matrix = Array.isArray(receipt?.creditMatrix)
     ? receipt.creditMatrix
     : buildCreditMatrix(entries, profileCache);
   const receiptCid = receipt?.cid || "";
@@ -192,7 +192,7 @@ export default function ProofOfPriorityReceipt({
                     {truncate(row.contributor)}
                   </td>
                   <td style={{ padding: "11px 12px", borderBottom: "1px solid #DCFCE7", fontSize: "12px", color: "#14532D", fontWeight: 600 }}>
-                    {row.profile?.name ?? row.name ?? "Unregistered"}
+                    {row.profile?.name ?? row.name ?? profileCache[row.contributor]?.name ?? "Unregistered"}
                   </td>
                   <td style={{ padding: "11px 12px", borderBottom: "1px solid #DCFCE7", fontFamily: "var(--font-geist-mono)", fontSize: "11px", color: "#14532D" }}>
                     {(row.roles ?? [row.role]).filter(Boolean).join(", ")}
