@@ -1,0 +1,3 @@
+[/api/upload] Error: TypeError: Content-Type was not one of "multipart/form-data" or "application/x-www-form-urlencoded".
+    at async m (C:\Dev\proof-of-priority-app\.next\server\chunks\[root-of-the-server]__0okz7aj._.js:1:2364)
+    at async l (C:\Dev\proof-of-priority-app\.next\server\chunks\[root-of-the-server]__0okz7aj._.js:1:6366)

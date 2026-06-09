@@ -36,6 +36,15 @@ body {
 
 ::selection { background: #C8E6DA; color: var(--accent-2); }
 
+.research-artifact-input::file-selector-button {
+  cursor: pointer;
+}
+
+.research-artifact-input:disabled,
+.research-artifact-input:disabled::file-selector-button {
+  cursor: not-allowed;
+}
+
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--paper-2); }
 ::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 3px; }

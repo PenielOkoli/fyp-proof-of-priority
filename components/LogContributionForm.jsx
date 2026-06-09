@@ -6,7 +6,7 @@
  * When project finalization is in progress (countdown running, not yet halted),
  * the form is locked. It re-enables automatically once finalization is halted.
  */
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { ethers } from "ethers";
 import toast from "react-hot-toast";
 import { useWallet } from "@/context/WalletContext";
@@ -43,6 +43,7 @@ export default function LogContributionForm({
   isFinalizationActive = false,
 }) {
   const { address } = useWallet();
+  const fileInputRef = useRef(null);
   const [file,     setFile]     = useState(null);
   const [role,     setRole]     = useState("Conceptualization");
   const [phase,    setPhase]    = useState(PHASE.IDLE);
@@ -60,6 +61,17 @@ export default function LogContributionForm({
     if (isLocked) return;
     const f = e.dataTransfer.files?.[0]; if (f) setFile(f);
   }, [isLocked]);
+
+  const openFilePicker = useCallback(() => {
+    if (isBusy || isLocked) return;
+    fileInputRef.current?.click();
+  }, [isBusy, isLocked]);
+
+  const handleFilePickerKeyDown = useCallback((e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    openFilePicker();
+  }, [openFilePicker]);
 
   const resetForm = () => {
     setFile(null); setRole("Conceptualization"); setPhase(PHASE.IDLE);
@@ -236,13 +248,20 @@ export default function LogContributionForm({
           <div>
             <label style={{ fontFamily:"var(--font-geist-mono)", fontSize:"10px", color:"var(--ink-4)", textTransform:"uppercase", letterSpacing:"0.15em", display:"block", marginBottom:"6px" }}>Research Artifact</label>
             <input
+              ref={fileInputRef}
+              className="research-artifact-input"
               type="file"
               onChange={e => { const f=e.target.files?.[0]; if(f) setFile(f); }}
               disabled={isBusy || isLocked}
               accept="*/*"
-              style={{ display:"block", width:"100%", color:"var(--ink-3)", fontFamily:"var(--font-geist-mono)", fontSize:"12px" }}
+              style={{ display:"block", width:"100%", color:"var(--ink-3)", fontFamily:"var(--font-geist-mono)", fontSize:"12px", cursor:(isBusy || isLocked) ? "not-allowed" : "pointer" }}
             />
             <div
+              role="button"
+              tabIndex={isBusy || isLocked ? -1 : 0}
+              aria-disabled={isBusy || isLocked}
+              onClick={openFilePicker}
+              onKeyDown={handleFilePickerKeyDown}
               onDragOver={e=>{e.preventDefault();if(!isLocked)setDragging(true);}}
               onDragLeave={()=>setDragging(false)}
               onDrop={handleDrop}
@@ -256,8 +275,9 @@ export default function LogContributionForm({
                 color:file?"var(--accent)":"var(--ink-4)",
                 transition:"all 0.15s",
                 opacity: isLocked ? 0.5 : 1,
+                cursor: (isBusy || isLocked) ? "not-allowed" : "pointer",
               }}>
-              {file ? `✓  ${file.name}  (${(file.size/1024).toFixed(1)} KB)` : "or drag & drop here"}
+              {file ? `✓  ${file.name}  (${(file.size/1024).toFixed(1)} KB)` : "Drag & Drop Here"}
             </div>
           </div>
 
